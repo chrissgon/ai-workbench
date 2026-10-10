@@ -47,7 +47,7 @@ def run_node_engine(tmp_path: Path, body: str) -> dict:
         f'export * from "{real}";\n'
         "export class WebGLRenderer {\n"
         "  constructor({ canvas }) { this.domElement = canvas; this.shadowMap = {}; this.draws = 0; }\n"
-        "  getContext() { return {}; } setClearColor() {} setPixelRatio() {} getPixelRatio() { return 1; } setSize() {} render() { this.draws += 1; } dispose() {} forceContextLoss() {}\n"  
+        "  getContext() { return {}; } setClearColor() {} setPixelRatio() {} getPixelRatio() { return 1; } setSize() {} render(scene) { this.draws += 1; globalThis.__scene = scene; } dispose() {} forceContextLoss() {}\n"  
         "  get info() { return { render: { calls: 0 }, memory: { geometries: 0 } }; }\n"
         "}\n", encoding="utf-8")
     (tmp_path / "hooks.mjs").write_text(
@@ -77,7 +77,7 @@ export const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t),
   lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
 export { THREE, createKit, buildWorld, cityTones };
 
-const floor = (name, extra = {}) => ({ name, label: name, state: "idle", window: "grey", decisions: 0, lobby: name === "planning", sheets: [{ path: "docs/a.md", tip: "docs/a.md" }, { path: "docs/b.md", tip: "docs/b.md" }], drawers: 1, tip: `tip ${name}`, interactive: true,
+const floor = (name, extra = {}) => ({ name, label: name, state: "idle", window: "grey", decisions: 0, lobby: name === "planning", notes: ["done", "run"], documents: 2, sheets: [{ path: "docs/a.md", tip: "docs/a.md" }, { path: "docs/b.md", tip: "docs/b.md" }], drawers: 1, tip: `tip ${name}`, interactive: true,
   plate: { name, label: name, dot: "muted", decisions: 0, word: "resting", done: 0, left: 0, queued: 0, runsText: "0 / 4", runsShare: 0, usdText: "$0 / $1", usdShare: 0, unknown: 0, mode: "supervised", pips: 2, acting: null, actingPips: 0, selected: false, off: false }, ...extra });
 export const lot = (id, extra = {}) => ({ id, name: id, accepted: true, decisions: 1, runningTask: id === "a" ? 5 : null, tip: `tip ${id}`, sub: "sub", selected: null, tag: null,
   floors: [floor("planning"), floor("business", { state: "working", window: "lit" }), floor("design", { decisions: 2, state: "waiting" }), floor("engineering")], ...extra });
@@ -229,7 +229,7 @@ function run(label, at, cap = 120) {
 //    documents arrive on frame 12
 world.setFocus(A);
 run("open", [[3, () => world.update(models.building(null))], [11, () => world.update(models.building(DOCS))]]);
-out.afterOpen = { open: a.open, sheets: a.parts.map((p) => p && p.sheets.length) };
+out.afterOpen = { open: a.open, cases: a.parts.map((p) => p && p.cases) };
 // 2. the click on a floor: the Floor view starts without documents, reads them on frame 8
 world.setFloors(chosenName, null);
 run("floor", [[2, () => world.update(models.floor(null))], [8, () => world.update(models.floor(DOCS))]]);
@@ -265,7 +265,7 @@ console.log(JSON.stringify(out));
             assert all(v == 1 for v in series)
         else:
             assert all(b <= a + 1e-12 for a, b in zip(series, series[1:])) and series[-1] <= 0.001, f"floor {i} shrinks monotonically to nothing"
-    assert got["afterFloor"]["visible"].count(True) == 1 and got["afterFloor"]["hits"][:3] == ["agent", "desk", "tray"], "on the floor the room's objects are what the pointer meets"
+    assert got["afterFloor"]["visible"].count(True) == 1 and got["afterFloor"]["hits"][:3] == ["agent", "tasks", "desk"], "on the floor the room's three ways in are what the pointer meets (R-31)"
     back_floor = [f for f in frames if f["label"] == "backFloor" and "chosenSame" in f]
     assert all(f["chosenSame"] for f in back_floor), "Back from the floor: the chosen floor still keeps its transform"
     for i in range(len(got["floors"])):
@@ -316,7 +316,7 @@ console.log(JSON.stringify({ ...entered, back: { monotone: back.every((v, i) => 
     assert got["sameChosen"] is True, "the chosen floor's transform is not touched in any frame"
     assert got["meshesKept"] is True, "no mesh is replaced: the floor the person is on is the one they clicked"
     assert got["visible"] == [False, True, False, False], "the others are out of the scene when they have reached nothing"
-    assert got["hits"] == ["agent", "desk", "tray", "sheet:docs/a.md", "sheet:docs/b.md"], "the objects of the room are what the pointer meets"
+    assert got["hits"] == ["agent", "tasks", "desk"], "the owl, the board of notes and the bookcase are what the pointer meets (R-31)"
     assert got["others"] == [True, True] or got["others"] == [False, False], "the city furniture goes only when the engine hides it after everything settled (not by the world's own motion)"
     assert got["back"]["monotone"] is True and got["back"]["last"] == 1, "Back: the floors grow back by the same approach"
 
@@ -534,28 +534,24 @@ console.log(JSON.stringify({ rows: options.length, longTitle: longOption.attrs.t
 # --- the six corrections of the maintainer's last test (2026-10-09) ---------------------------------------------------------------------------------
 
 @needs_node
-def test_the_outline_is_the_outer_parts_only_a_few_edges_per_object_and_never_an_inner_part(tmp_path):
+def test_a_room_is_marked_by_brackets_and_never_outlined_and_the_citys_building_keeps_its_one_body(tmp_path):
+    # R-28 and R-31 supersede "the outline is the outer parts only": a floor of the Building and an object of a room (the owl, the board, the bookcase, the door) are marked by
+    # corner brackets of their own (a hidden group of one mesh, shown by the engine), and the room is drawn in batches that mark no part of an outline
     got = run_node(tmp_path, WORLD_JS + r"""
 import { outlineGeometry, outlineMeshes } from "@JS@/scene/outline.js";
 const { world } = make();
-world.update(model({ focus: "a", floor: "business", room: { tips: { agent: "a", desk: "d", tray: "t" }, board: null, door: false } }));
+world.update(model({ focus: "a", floor: "planning", room: { tips: { agent: "a" }, board: null, door: true } }));
 world.setFocus("a", true);
-world.setFloors("business", null, true);
+world.setFloors("planning", null, true);
 const out = { objects: {} };
 for (const hit of world.hits) {
-  const meshes = outlineMeshes(hit.object);
-  const geometry = outlineGeometry(THREE, hit.outline || hit.object, 0.04);
-  out.objects[hit.id] = { parts: meshes.length, allShell: meshes.every((m) => m.userData.shell === true), segments: geometry.getAttribute("position").count / 2 };
+  out.objects[hit.id] = { shell: outlineMeshes(hit.object).length, marks: Boolean(hit.marks), hidden: hit.marks ? hit.marks.visible === false : null, meshes: hit.marks ? hit.marks.children.filter((c) => c.isMesh).length : 0, anchor: Boolean(hit.anchor) };
 }
-// the Building screen: a floor is outlined by its own room's slab and walls, never by the lines of the closed shell's floors
+// the Building screen: a floor is marked by the brackets of its room, the door by its own
 world.setFloors(null, null, true);
 world.update(model({ focus: "a" }));
 out.floorHits = {};
-for (const hit of world.hits) {
-  if (!hit.id.startsWith("floor:")) continue;
-  const object = hit.outline || hit.object;   // as the engine draws it
-  out.floorHits[hit.id] = { parts: outlineMeshes(object).length, segments: outlineGeometry(THREE, object, 0.04).getAttribute("position").count / 2 };
-}
+for (const hit of world.hits) out.floorHits[hit.id] = { marks: Boolean(hit.marks), hidden: hit.marks ? hit.marks.visible === false : null, shell: outlineMeshes(hit.object).length };
 // the City: a building is one enclosing body, its silhouette
 world.setFocus(null, true);
 world.setFloors(null, null, true);
@@ -568,34 +564,33 @@ out.bare = outlineMeshes(bare).length;
 console.log(JSON.stringify(out));
 """)
     assert got["bare"] == 0, "no shell part, no outline: never every mesh"
+    assert sorted(got["objects"]) == ["agent", "desk", "lobby-door", "tasks"], "the Lobby's room: the owl, the board, the bookcase and the door"
     for hit, o in got["objects"].items():
-        assert o["allShell"] is True and o["parts"] >= 1, f"{hit}: only parts marked as the outer shell"
-        assert 0 < o["segments"] <= 160, f"{hit}: a handful of edges ({o['segments']}), not every edge of every part"
-    assert got["objects"]["tray"]["parts"] == 1 and got["objects"]["desk"]["parts"] == 1, "the tray is its box, the desk its top"
+        assert o["marks"] is True and o["hidden"] is True and o["meshes"] == 1 and o["shell"] == 0 and o["anchor"] is True, f"{hit}: brackets of its own, hidden until asked for, one mesh, no outline part, a point for its tooltip"
+    assert got["floorHits"] and all(f["marks"] is True and f["hidden"] is True and f["shell"] == 0 for f in got["floorHits"].values()), "a floor of the Building and the door are marked by brackets, never by an outline"
     assert got["city"]["allShell"] is True and got["city"]["parts"] == 1 and got["city"]["segments"] == 12, "a building's outline in the City is one body's twelve edges: no line at any floor boundary, none for the roof's parts or the windows"
-    assert got["floorHits"] and all(f["parts"] == 3 and f["segments"] <= 36 for f in got["floorHits"].values()), "a floor of the open building: its slab and its two walls, three boxes, and nothing of the closed shell"
 
 
 @needs_node
-def test_the_tray_is_on_every_floor_with_one_sheet_for_each_decision_and_the_top_floor_has_no_roof_when_open(tmp_path):
+def test_every_floor_has_a_board_a_bookcase_and_a_desk_and_the_top_floor_has_no_roof_when_open(tmp_path):
+    # R-23 supersedes "the tray is on every floor": no tray, no table of sheets, no cabinet; the board and the bookcase are on every floor, with or without a task or a document
     got = run_node(tmp_path, WORLD_JS + r"""
-const states = (n) => lot("a", { floors: lot("a").floors.map((f, i) => ({ ...f, decisions: [0, 1, 2, 7][i] })) });
+const states = () => lot("a", { floors: lot("a").floors.map((f, i) => ({ ...f, decisions: [0, 1, 2, 7][i], notes: [[], ["done"], ["done", "run", "left"], ["left", "left", "run", "done", "done", "done", "left"]][i], documents: [0, 3, 16, 17][i] })) });
 const { world } = make({ lots: [states(), lot("b"), lot("c")] });
 world.setFocus("a", true);
 const a = world.towers.get("a");
-// the tray's sheets: the boxes standing on its base (a base, four rims, then one sheet per decision up to five, then one thicker block)
-const traySheets = (i) => a.parts[i].tray.userData.stack.children.filter((c) => c.isMesh).length;
-const out = { sheets: [0, 1, 2, 3].map(traySheets), hit: [0, 1, 2, 3].map((i) => !!a.parts[i].tray) };
+const out = { board: [0, 1, 2, 3].map((i) => Boolean(a.parts[i].board && a.parts[i].board.children.length === 1)), shelf: [0, 1, 2, 3].map((i) => Boolean(a.parts[i].shelf && a.parts[i].shelf.children.length === 1)),
+  cases: [0, 1, 2, 3].map((i) => a.parts[i].cases), notes: [0, 1, 2, 3].map((i) => a.parts[i].notesShown), noTray: [0, 1, 2, 3].every((i) => a.parts[i].tray === undefined && a.parts[i].sheets === undefined) };
 // the roof: gone when the building is open, and the top floor has no ceiling slab
 out.roof = a.group.children.filter((c) => c.position.y > a.floorGroups[3].position.y + 2).map((c) => c.visible);
 out.shells = a.floorGroups.map((g) => g.children[0].visible);
 console.log(JSON.stringify(out));
 """)
-    assert got["hit"] == [True, True, True, True], "the tray stands on the desk of every floor, with or without a decision"
-    assert got["sheets"] == [0, 1, 2, 6], "one sheet per decision up to five, then a thicker block: nothing for none"
+    assert got["board"] == [True] * 4 and got["shelf"] == [True] * 4, "the board of notes and the bookcase stand on every floor, with or without a task or a document"
+    assert got["cases"] == [1, 1, 1, 2], "one bookcase holds sixteen binders, a second comes with the seventeenth"
+    assert got["notes"] == [0, 1, 3, 6], "one note for each task of the agent, as many as the board holds: a second bookcase (17 documents) leaves it room for six of the seven"
+    assert got["noTray"] is True, "no tray and no table of sheets"
     assert got["roof"] == [False] and got["shells"] == [False] * 4, "no roof slab over the top floor and no front wall: the room is open like the others"
-    floor_model = (JS / "floor-model.js").read_text(encoding="utf-8")
-    assert "Inbox · ${row.decisions} waiting" in floor_model, "the tooltip says how many wait"
 
 
 def test_escape_has_one_handler_in_the_frame_and_none_in_the_screens():
@@ -685,8 +680,8 @@ def test_the_route_changes_at_the_click_and_never_waits_for_the_scene():
 @needs_node
 def test_each_thing_a_poll_or_the_documents_change_changes_where_it_stands(tmp_path):
     """Root cause of PR 252 finding 1 (the package's plan, outside the repository: tower-rebuilt-on-the-route-path): `towerStructure` held the state, window, decisions,
-    sheets, drawers and the work-order floor, so any of them built the whole tower again. Each is now changed in place; a floor whose documents are
-    unread (`null`) keeps what it shows."""
+    documents and the work-order floor, so any of them built the whole tower again. Each is changed in place; a floor whose documents or tasks are unread (`null`) keeps
+    what it shows. Round 4 (R-23, R-23b, R-49): the board's notes and the bookcase's binders are made again in the meshes that stand for them (their geometry is swapped)."""
     got = run_node(tmp_path, WORLD_JS + SNAP_JS + r"""
 const { world } = make({ focus: "a" });
 world.setFocus("a", true);
@@ -700,27 +695,26 @@ const edit = (fn) => {
   all.clear(); for (const x of now) all.add(x);
   return res;
 };
-const keep = () => {};
-const tray = () => a.parts[2].tray.userData.stack.children.filter((c) => c.isMesh).length;
-const cabinet = () => a.parts[2].sheets.length;
-out.decisions = [tray()];
-out.decisionsUp = edit((l) => { l.floors[2].decisions = 4; }); out.decisions.push(tray()); keep();
-out.decisionsDown = edit((l) => { l.floors[2].decisions = 0; }); out.decisions.push(tray()); keep();
-// the table's sheets: one more arrives, the ones that were there stay (the same groups)
-const first = a.parts[3].sheets.map((s) => s.group);
-out.sheetsUp = edit((l) => { l.floors[3].sheets.push({ path: "docs/c.md", tip: "docs/c.md" }); });
-out.sheetsKept = a.parts[3].sheets.slice(0, 2).every((s, i) => s.group === first[i]) && a.parts[3].sheets.length === 3; keep();
-// unread documents: null changes nothing
-out.unread = edit((l) => { l.floors[3].sheets = null; l.floors[3].drawers = null; });
-out.unreadSheets = a.parts[3].sheets.length;
+// the decisions of a floor change what the owl opens and the mark, not what is drawn
+out.decisionsUp = edit((l) => { l.floors[2].decisions = 4; });
+out.decisionsDown = edit((l) => { l.floors[2].decisions = 0; });
+// the board's notes: one more task arrives; the board is the same mesh with a new geometry
+out.notes = [a.parts[3].notesShown];
+out.notesUp = edit((l) => { l.floors[3].notes = ["done", "run", "left"]; });
+out.notes.push(a.parts[3].notesShown);
+// the bookcase: a second one comes with the seventeenth document, a third with the thirty-fourth
+out.cases = [a.parts[3].cases];
+out.documentsUp = edit((l) => { l.floors[3].documents = 17; }); out.cases.push(a.parts[3].cases);
+out.documentsMore = edit((l) => { l.floors[3].documents = 40; }); out.cases.push(a.parts[3].cases);
+// unread documents and tasks: null changes nothing
+out.unread = edit((l) => { l.floors[3].documents = null; l.floors[3].notes = null; });
+out.unreadCases = a.parts[3].cases;
 // the window of a floor: the material of the same meshes
 out.window = edit((l) => { l.floors[0].window = "lit"; });
 // R-16: the glass of a floor is one batched mesh, and a window's state is a repaint of its vertices (R-18: the lit tone is the warm white)
 const glass = a.floorGroups[0].children[0].children[1];
 const paint = glass.geometry.getAttribute("color");
 out.litGlass = [paint.getX(0), paint.getY(0), paint.getZ(0)].every((v, i) => Math.abs(v - [cityTones(palette).glassLit.r, cityTones(palette).glassLit.g, cityTones(palette).glassLit.b][i]) < 1e-6);
-// the floor the work order is on
-out.selected = edit((l) => { l.selected = "design"; });
 // R-20, R-21: the decision mark stands beside a floor that waits: a decision arrives on a floor that had none and the floor waits
 const marks = (i) => a.overlay.children.filter((c) => c.userData.mark && c.userData.floor === i).length;
 out.markers = marks(3);
@@ -733,16 +727,15 @@ const roomNow = meshesOf(a.inner[3]);
 out.stateRoom = { replaced: [...roomMeshes].every((m) => !roomNow.has(m)), othersKept: [...other].every((m) => meshesOf(a.inner[2]).has(m)), motions: a.motions.length };
 console.log(JSON.stringify(out));
 """)
-    for key in ("decisionsUp", "decisionsDown", "sheetsUp", "unread", "window", "selected", "marker", "state"):
+    for key in ("decisionsUp", "decisionsDown", "notesUp", "documentsUp", "documentsMore", "unread", "window", "marker", "state"):
         assert got[key]["same"] is True and got[key]["r"]["structure"] is False, f"{key}: the same tower, nothing built again"
-    assert got["decisions"] == [2, 4, 0], "the tray's stack follows the decisions: 2, then 4, then none"
-    assert got["decisionsUp"]["lost"] <= 2 and got["decisionsDown"]["lost"] <= 6, "only the stack's sheets (and the exclamation outside, when the last decision goes) change: the tray's base, rims and the desk stay"
-    assert got["sheetsUp"]["lost"] == 0 and got["sheetsKept"] is True, "a sheet that arrives is added; the ones on the table are the same groups"
-    assert got["unread"]["lost"] == 0 and got["unread"]["added"] == 0 and got["unreadSheets"] == 3, "documents not read yet (null) change nothing: the table keeps its sheets"
+    assert got["decisionsUp"]["lost"] == 0 and got["decisionsDown"]["lost"] == 0, "the decisions of a floor draw nothing: the owl's hit, the mark and the tooltip follow"
+    assert got["notes"] == [2, 3] and got["notesUp"]["lost"] == 0 and got["notesUp"]["added"] == 0, "a task that arrives is a note on the board, in the board's own mesh (R-23b)"
+    assert got["cases"] == [1, 2, 3] and got["documentsUp"]["lost"] == 0 and got["documentsMore"]["lost"] == 0, "the binders are made again in the bookcase's own mesh; a second bookcase comes at the seventeenth document (R-49)"
+    assert got["unread"]["lost"] == 0 and got["unread"]["added"] == 0 and got["unreadCases"] == 3, "documents and tasks not read yet (null) change nothing: the shelves keep their binders"
     assert got["window"]["lost"] == 0 and got["litGlass"] is True, "a window changes its colour, not its meshes (R-16, R-18)"
-    assert got["selected"]["lost"] == 0, "the slab of the work-order floor changes its tone, in place"
     assert got["markers"] == 0 and got["markersAfter"] == 1, "a decision that arrives on a floor that waits makes the mark beside it (R-20, R-21)"
-    assert got["stateRoom"]["replaced"] is True and got["stateRoom"]["othersKept"] is True, "a state change makes that floor's room again (a figure sits, stands) and no other floor's"
+    assert got["stateRoom"]["replaced"] is True and got["stateRoom"]["othersKept"] is True, "a state change makes that floor's room again (the owl takes another pose) and no other floor's"
 
 
 # The page around the engine, as little of it as the engine reads: the document and the window of the fake DOM, a clock and a frame queue the test

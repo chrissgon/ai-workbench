@@ -112,8 +112,9 @@ export function createFloorView(frame, env) {
   // --- the scene ---------------------------------------------------------------------------------------------------------------
   function sceneOpen(id) {
     if (disposed || !project) return;
-    // one object per destination: the tray the Inbox, the desk the Desk tab, the figure the Agent tab, a sheet its document
-    if (id === "tray") window.location.hash = router.floorHash(project, agent, "inbox");
+    // one object per destination (R-23b, R-31): the tray the Inbox, the bookcase the Desk tab, the board the Tasks tab, the owl the Agent tab, a sheet its document
+    if (id === "tasks") window.location.hash = router.floorHash(project, agent, "tasks");
+    else if (id === "tray") window.location.hash = router.floorHash(project, agent, "inbox");
     else if (id === "desk") window.location.hash = router.floorHash(project, agent, "desk");
     else if (id === "agent") window.location.hash = router.floorHash(project, agent, "agent");
     else if (String(id).startsWith("sheet:")) window.location.hash = router.deskHash(project, agent, String(id).slice(6));

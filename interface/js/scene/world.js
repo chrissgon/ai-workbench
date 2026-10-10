@@ -6,18 +6,41 @@
 // targets changes the world in place (`update`); only a change of the set of lots builds it again.
 //
 // model: {ready, selectedId, marked, outlined, focus, floor, frame, room, lots: [{id, name, accepted, decisions, runningTask, tip, sub, floors: [{name,
-// label, state, window, decisions, lobby, sheets: [{path, tip}], drawers, tip, interactive, plate}], selected, tag: {floor, text}|null}]}.
+// label, state, window, decisions, lobby, notes: ["done" | "run" | "left"], documents, tip, interactive, plate}], selected, tag: {floor, text}|null}]}.
 // `focus` is the building that is open; `floor` the floor of it the route is on (the Floor, the Lobby), with `room` the words of that room
-// ({tips: {agent, desk, tray}, board, door}); `frame` the one floor a phone shows; `marked` the id of the hit that keeps a selection outline.
+// ({tips: {agent, doorTip}, board, door}); `frame` the one floor a phone shows; `marked` the id of the building that keeps its brackets in the City.
+// What the pointer meets in a room (R-31): the owl (`agent`, or `tray` when it asks something: the Inbox), the board of notes (`tasks`) and the bookcase (`desk`), and in the
+// Lobby the door (`lobby-door`); in the Building the floor (`floor:<name>`, R-28) and the Lobby's door (`door`). A hit's `marks` are the corner brackets the engine shows for it.
 
 import { lotAt, buildGround } from "./city.js";
-import { createTower, floorBox, towerBox, towerStructure } from "./tower.js";
+import { createTower, floorBox, lotBox, towerBox, towerStructure } from "./tower.js";
 import { EXPLODE_RATE, approach } from "./prototype-motion.js";
 import { boardNode, doorNode, plateNode, tagNode } from "./plates.js";
+import { agentTip, asking, documentsTip, tasksTip } from "./room-words.js";
 
+/** The page's City at 1280 by 800: a building's ledge, 7.1 by 5.5 units, is 212 px across on the screen, which is (7.1 + 5.5) * 0.7071 units of the camera's space. */
+const CITY_PIXELS_A_UNIT = 212 / ((7.1 + 5.5) * Math.SQRT1_2);
+const CITY_SMALLEST = 0.75;   // the phone's share of it: 87.3 px of a roof's edge against 116.4, in `city.html`
 const SETTLED = 0.004;       // a tower's open progress that is this near 0 or 1 is there (the prototype's `explode` snap)
 const VIS_RATE = 8;          // the prototype's `f.vis += (target - vis) * (1 - exp(-dt * 8))`
 const VIS_SETTLED = 0.01;
+
+/** The words of a room's three objects and its door, from the model's own tips, the notes of the board and the documents on the shelves. */
+function roomTips(floor, room) {
+  const agent = (room.tips && room.tips.agent) || "";
+  const documents = typeof floor.documents === "number" ? floor.documents : null;
+  return {
+    agent: agentTip(agent, false), tray: agentTip(agent, true), tasks: tasksTip(floor.notes, floor.plate && typeof floor.plate.left === "number" ? floor.plate.left : null), desk: documentsTip(documents),
+    door: room.doorTip || "Control room · skills, costs, connections",
+  };
+}
+
+/** The point over an object, for its tooltip: the middle of the top of its box in the world. */
+function topOf(THREE, object) {
+  object.updateWorldMatrix(true, true);   // a room made a moment ago has not been rendered: its matrices are as stale as its parents' (as `pick.js` brings them up to date)
+  const box = new THREE.Box3().setFromObject(object);
+  return new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+}
 
 export function buildWorld(kit, model) {
   const { THREE } = kit;
@@ -68,6 +91,11 @@ export function buildWorld(kit, model) {
     for (const tower of towers.values()) {
       const only = tower.id === focus ? floorIndex(tower) : -1;
       tower.visTarget = tower.lot.floors.map((f, i) => (only < 0 || i === only ? 1 : 0));
+      const hush = tower.id === focus && Boolean(floorSel);   // the Floor and the Lobby show the room alone: no mark beside it
+      if (tower.marksHidden !== hush) {
+        tower.marksHidden = hush;
+        tower.apply();
+      }
     }
   }
 
@@ -83,6 +111,7 @@ export function buildWorld(kit, model) {
       const tower = towers.get(lot.id);
       markers.push(...tower.markers);
       motions.push(...tower.motions);
+      if (tower.interior && (focus === lot.id || tower.open > 0)) motions.push(...tower.roomMotions);   // an owl moves while its room is open or closing: the City ticks none after a visit
       outlines.push(...tower.outlines);
       brackets.push({ id: lot.id, group: tower.brackets.group, tower });
       if (tower.beacon) beacons.push(tower.beacon);
@@ -94,26 +123,31 @@ export function buildWorld(kit, model) {
           if (!f.interactive || !parts || tower.vis[k] <= VIS_SETTLED) return;
           if (only >= 0) {
             if (k !== only) return;
-            const tips = room.tips || {};
-            if (parts.agent) hits.push({ object: parts.agent, id: "agent", tip: tips.agent || "", moves: f.state === "working" });
-            hits.push({ object: parts.desk, id: "desk", tip: tips.desk || "", moves: f.state === "working" });
-            hits.push({ object: parts.tray, id: "tray", tip: tips.tray || "" });
-            for (const s of parts.sheets) hits.push({ object: s.group, id: `sheet:${s.path}`, tip: ((f.sheets || []).find((x) => x.path === s.path) || {}).tip || s.path });
-            if (parts.door) hits.push({ object: parts.door, id: "lobby-door", tip: room.doorTip || "Control room · skills, costs, connections" });
+            // R-31: the room's ways in are what the pointer picks, and the room as a whole is not
+            const words = roomTips(f, room);
+            const asks = asking(f);
+            if (parts.agent) hits.push({ object: parts.agent, id: asks ? "tray" : "agent", tip: asks ? words.tray : words.agent, marks: parts.marks.agent, anchor: topOf(THREE, parts.agent) });
+            hits.push({ object: parts.board, id: "tasks", tip: words.tasks, marks: parts.marks.board, anchor: topOf(THREE, parts.board) });
+            hits.push({ object: parts.shelf, id: "desk", tip: words.desk, marks: parts.marks.shelf, anchor: topOf(THREE, parts.shelf) });
+            if (parts.door) hits.push({ object: parts.door, id: "lobby-door", tip: words.door, marks: parts.marks.door, anchor: topOf(THREE, parts.door) });
           } else {
-            hits.push({ object: tower.floorGroups[k], outline: parts.frame, id: `floor:${f.name}`, tip: f.tip });   // the pointer meets the whole floor; the line is its slab and walls
-            if (parts.door) hits.push({ object: parts.door, id: "door", tip: "Control room · skills, costs, connections" });
+            hits.push({ object: tower.floorGroups[k], id: `floor:${f.name}`, tip: f.tip, marks: parts.marks.room });   // R-28: the pointer meets the whole floor; its corners are marked
+            if (parts.door) hits.push({ object: parts.door, id: "door", tip: "Control room · skills, costs, connections", marks: parts.marks.door });
           }
         });
       } else if (!focus && lot.floors.some((f) => f.interactive)) {
         hits.push({ object: tower.root, id: lot.id, tip: lot.tip, pad: 0.06, brackets: true });   // R-17: a building is marked by its brackets, not by an outline
       }
     });
+    // F1: the brackets of a hit that is no longer one (a floor that opened into the Floor, an owl that left with a Back) are put away with it, whatever the pointer did
+    const kept = new Set(hits.map((hit) => hit.marks).filter(Boolean));
+    for (const hit of content.hits) if (hit.marks && !kept.has(hit.marks)) hit.marks.visible = false;
     for (const [key, list] of [["hits", hits], ["markers", markers], ["motions", motions], ["outlines", outlines], ["beacons", beacons], ["brackets", brackets]]) {
       content[key].length = 0;
       content[key].push(...list);
     }
     const focused = focus ? towers.get(focus) : null;
+    content.dim = Boolean(focused && !focused.lot.accepted);   // a project that is not accepted: the whole drawing at 55 percent (the engine's canvas class)
     content.tag = focused && focused.tag ? { group: focused.tag.group, floor: focused.tag.floor, y: focused.tagRestY() } : null;
   }
 
@@ -136,14 +170,12 @@ export function buildWorld(kit, model) {
         const index = m.floor ? lot.floors.findIndex((f) => f.name === m.floor) : -1;
         if (index >= 0) {
           const room = m.room || {};
-          const tips2 = room.tips || {};
-          tips.set("agent", tips2.agent || "");
-          tips.set("desk", tips2.desk || "");
-          tips.set("tray", tips2.tray || "");
-          tips.set("lobby-door", room.doorTip || "Control room · skills, costs, connections");
-          // the sheets the table shows (the lot's documents may be unread: then it keeps what it shows) and their words
-          const told = new Map((lot.floors[index].sheets || []).map((x) => [x.path, x.tip]));
-          for (const s of (tower.parts[index] && tower.parts[index].sheets) || []) tips.set(`sheet:${s.path}`, told.get(s.path) || s.path);
+          const words = roomTips(lot.floors[index], room);
+          tips.set("agent", words.agent);
+          tips.set("tray", words.tray);
+          tips.set("tasks", words.tasks);
+          tips.set("desk", words.desk);
+          tips.set("lobby-door", words.door);
           if (room.board) labels.push({ id: "board-label", kind: "board", rank: 0, title: room.board.title, lines: room.board.lines, dot: room.board.dot, decisions: 0, running: false, anchor: tower.boardAnchors[index], make: boardNode });
           if (room.door) labels.push({ id: "door-label", kind: "door", rank: 5, text: "Control room", decisions: 0, running: false, anchor: tower.doorAnchors[index], make: doorNode });
         } else {
@@ -259,14 +291,14 @@ export function buildWorld(kit, model) {
   content.subject = () => {
     const tower = focus ? towers.get(focus) : null;
     if (!tower) {
-      // the City is framed on its buildings with the corners of their blocks (the brackets stand there); the city round them runs on past every
-      // edge the camera can show (city.js)
+      // the City is framed on its buildings, as large as the free rectangle lets them stand (`zoomCap` says how large the page draws one); the city round them is drawn
+      // beyond every edge the camera can show (city.js)
       const box = new THREE.Box3();
       lots.forEach((lot, i) => {
         const { x, z } = lotAt(i, lots.length);
-        box.union(towerBox(THREE, x, z, lot.floors.length, 0));
+        box.union(lotBox(THREE, x, z, lot.floors.length));
       });
-      return box.expandByVector(new THREE.Vector3(1.8, 0, 1.8));
+      return box;
     }
     const i = lots.findIndex((lot) => lot.id === focus);
     const { x, z } = lotAt(i, lots.length);
@@ -276,13 +308,20 @@ export function buildWorld(kit, model) {
   };
 
   /**
-   * On the Floor and in the Lobby the city furniture (the streets, the trees, the other buildings) is hidden once everything has settled, never
-   * before (the prototype showed it throughout the motion); any motion draws it again at once.
+   * On the Floor and in the Lobby the other buildings are hidden once everything has settled, never before (the prototype showed them throughout the motion);
+   * any motion draws them again at once. The streets and the trees stay, as the round's pages draw them.
    */
   content.hideSurroundings = (on) => {
-    ground.group.visible = !on;
+    // the page draws the streets and the parks round the room (`floor.html`, `lobby.html`): only the other buildings are put away, so that the room stands alone on its block
     for (const tower of towers.values()) if (tower.id !== focus) tower.root.visible = !on;
   };
+
+  /**
+   * How close the camera may come, in pixels to a world unit, for a canvas of `size`: in the City, as large as `city.html` draws a building at 1280 by 800 (its ledge is 212 px
+   * across for a ledge of 8.9 units of screen), scaled with the canvas down to three quarters of it, which is what the page's phone frames draw (a ledge of 87 px against
+   * 116 for the same two projects); null for a building, a floor or a room, which fill the free rectangle.
+   */
+  content.zoomCap = (size) => (focus ? null : CITY_PIXELS_A_UNIT * Math.max(CITY_SMALLEST, Math.min(size.w / 1280, size.h / 800)));
 
   content.bounds = content.subject();
   content.focusId = () => focus;

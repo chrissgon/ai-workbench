@@ -99,8 +99,13 @@ def test_the_owl_module_holds_the_marks_six_colours_and_the_parts_the_shadow_and
     owl = (SCENE / "owl.js").read_text(encoding="utf-8")
     assert sorted(re.findall(r"#[0-9A-Fa-f]{6}\b", owl)) == sorted(["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FFFFFF", "#FCD34D"]), "the mark's palette and nothing else"
     ids = re.findall(r'\{ id: "([a-z-]+)", kind:', owl)
-    assert ids == ["ear-left", "ear-right", "foot-left", "foot-right", "body", "wing-left", "wing-right", "face", "eye-left", "eye-right", "pupil-left", "pupil-right",
-                   "glint-left", "glint-right", "beak"], "the parts of the mark the shadow and R4-B2 start from, back to front (the brows, the rings and the feathers are R4-B2's)"
+    mark = ["ear-left", "ear-right", "foot-left", "foot-right", "body", "wing-left", "wing-right", "face", "eye-left", "eye-right", "pupil-left", "pupil-right", "glint-left", "glint-right", "beak"]
+    # R-41 (R4-B2): the parts the poses add: the lids, the rings round the eyes and the brows over them, the two chains of feathers, the raised wing, the shut eyes, the shadow on the floor;
+    # then the working owl's own (turned three-quarters to its desk, with its two wings)
+    added = ["lid-left", "lid-right", "ring-left", "ring-right", "brow-left", "brow-right", "chain-top", "chain-low", "wing-wave", "shut-left", "shut-right", "closed-left", "closed-right", "shadow"]
+    working = ["w-ear-left", "w-ear-right", "w-foot-left", "w-foot-right", "w-face", "w-eye-left", "w-eye-right", "w-pupil-left", "w-pupil-right", "w-glint-left", "w-glint-right",
+               "w-lid-left", "w-lid-right", "w-ring-left", "w-ring-right", "w-brow-left", "w-brow-right", "w-beak", "w-hand-far", "w-hand-near"]
+    assert ids == mark + added + working, "the mark's parts, back to front, and what the three poses add to them"
     assert 'from "./svgpath.js"' in owl and "three.js" not in owl and "export function partShapes(THREE," in owl, "the owl takes the library as an argument, as the parser does"
 
 
@@ -111,13 +116,13 @@ import * as THREE from "@JS@/three.js";
 import { OWL_PARTS, OWL_PALETTE, owlOutline, owlPart, partShapes, partStroke } from "@JS@/scene/owl.js";
 const box = (shape) => { const pts = shape.getPoints(24); return [Math.min(...pts.map((p) => p.x)), Math.max(...pts.map((p) => p.x)), Math.min(...pts.map((p) => p.y)), Math.max(...pts.map((p) => p.y))].map((v) => +v.toFixed(1)); };
 const out = {};
-out.parts = OWL_PARTS.map((p) => [p.id, partShapes(THREE, p).length, new THREE.ShapeGeometry(partShapes(THREE, p)).getAttribute("position").count > 0]);
+out.parts = OWL_PARTS.filter((p) => p.fill).map((p) => [p.id, partShapes(THREE, p).length, new THREE.ShapeGeometry(partShapes(THREE, p)).getAttribute("position").count > 0]);   // a ring, a brow and a chain are ink alone: no fill
 const outline = owlOutline(THREE);
 out.body = box(outline.body);
 out.ears = outline.ears.map(box);
 out.fitted = box(owlOutline(THREE, { scaleX: 0.01, scaleY: 0.02 }).body);
 out.stroked = [partStroke(THREE, owlPart("body")).length > 0, partStroke(THREE, owlPart("pupil-left"))];
-out.fills = OWL_PARTS.map((p) => p.fill).every((f) => Object.values(OWL_PALETTE).includes(f));
+out.fills = OWL_PARTS.map((p) => p.fill).filter(Boolean).every((f) => Object.values(OWL_PALETTE).includes(f));
 console.log(JSON.stringify(out));
 """)
     assert all(count == 1 and drawn for _, count, drawn in got["parts"]), "every part is one shape with triangles"
@@ -434,7 +439,7 @@ def test_the_scenes_style_sheet_is_linked_once_after_the_pages_and_holds_no_colo
 def test_the_engine_marks_a_building_with_brackets_never_an_outline_and_the_shade_lies_over_the_blocks():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "b.group.visible = b.tower.brackets.closed && (b.id === hoverId || b.id === content.marked)" in engine, "R-17: pointed at or followed, and closed"
-    assert "if (hit && !hit.brackets)" in engine and "if (!hit || hit.brackets)" in engine, "a building of the City has no outline to draw"
+    assert "if (hit && !hit.brackets && !hit.marks)" in engine and "if (!hit || hit.brackets || hit.marks)" in engine, "a building of the City, or an object with brackets of its own (R-28, R-31), has no outline to draw"
     assert "SHADE_Y = 0.22" in engine and "ground.position.y = -0.06" in engine and "shade.position.y = SHADE_Y" in engine, "the shadows land over the paving, the void under the streets"
     world = (SCENE / "world.js").read_text(encoding="utf-8")
     assert "brackets: true" in world and "tower.brackets.group" in world

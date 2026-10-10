@@ -120,6 +120,11 @@ for (const [width, height, left, top] of [[1280, 720, 0, 0], [375, 520, 13, 90]]
       if (!old || old.id !== s.id) result.wrongLegacy += 1;
       // the outline of the picked object stands on that object: it holds the sample point on the screen and stays within the object's own bounds
       const hit = hits.find((h) => h.id === s.id);
+      // R-28 and R-31: an object of a room is marked by corner brackets (hit.marks: a hidden group of one mesh, shown by the engine), not by an outline
+      if (hit.marks) {
+        if (hit.marks.visible !== false || !hit.marks.children.length) result.outlineOff.push([s.id, s.kind, "marks", hit.marks.visible]);
+        continue;
+      }
       const pad = hit.pad !== undefined ? hit.pad : 0.04;
       const geometry = outlineGeometry(THREE, hit.outline || hit.object, pad);
       geometry.computeBoundingBox();
@@ -155,9 +160,9 @@ def test_the_pick_the_tooltip_and_the_outline_name_the_object_at_its_drawn_centr
         assert r["wrongPick"] == [], f"{name}: the pointer on an object's drawn centre picked another one: {r['wrongPick']}"
         assert r["outlineOff"] == [], f"{name}: the outline is not on the object it names: {r['outlineOff']}"
         assert r["tipsMissing"] == [], f"{name}: an object without its tooltip: {r['tipsMissing']}"
-    # the page's old pick (every child of the group, the edge lines at a threshold of one unit) is wrong in the Control room and in the Floor:
-    # this is the cause the test exists for; if three.js ever changed that default the sampling above would still hold
-    assert got["control@1280"]["wrongLegacy"] > 0 and got["floor-working@1280"]["wrongLegacy"] > 0, "the legacy pick must fail where the maintainer saw it fail"
+    # the page's old pick (every child of the group, the edge lines at a threshold of one unit) is wrong in the Control room (it still draws its edge lines):
+    # this is the cause the test exists for; if three.js ever changed that default the sampling above would still hold. The rooms of round 4 draw no edge line (R-23: batches).
+    assert got["control@1280"]["wrongLegacy"] > 0, "the legacy pick must fail where the maintainer saw it fail"
 
 
 def test_the_engine_picks_meshes_only_through_pick_js_and_the_outline_comes_from_outline_js():
@@ -174,7 +179,7 @@ def test_the_engine_picks_meshes_only_through_pick_js_and_the_outline_comes_from
 # --- the prototype's motion code -----------------------------------------------------------------------------------------------------
 
 PROTOTYPE = r"""
-import { approach, createApproach, frameSeconds, smooth, lerp, workingPose, screenBright, beaconPulse, CAMERA_RATE, EXPLODE_RATE, MAX_DT } from "@JS@/scene/prototype-motion.js";
+import { approach, createApproach, frameSeconds, smooth, lerp, beaconPulse, CAMERA_RATE, EXPLODE_RATE, MAX_DT } from "@JS@/scene/prototype-motion.js";
 import { createTween } from "@JS@/scene/tween.js";
 import { moveFrustum } from "@JS@/scene/fit.js";
 import { pulseBeacon } from "@JS@/scene/city.js";
@@ -220,15 +225,6 @@ out.openingSeconds = n / 60;
 out.smooth = [smooth(0), smooth(0.5), smooth(1), smooth(0.25)];
 out.approach = approach(0, 1, 0.1, 4.5);
 
-// the working figure: the prototype's `1.25 + sin(t * 11) * 0.22` (and the second arm `+ 2`), `sin(t * 6) * 0.01`, `sin(t * 1.3) * 0.12`, `sin(t * 9) > 0`
-const pose = (t) => workingPose(t);
-out.pose = [pose(0.1).left, pose(0.1).right, pose(0.1).bob, pose(0.1).turn].map((x) => Math.round(x * 1e6) / 1e6);
-out.expected = [Math.sin(1.1) * 0.22, Math.sin(1.1 + 2) * 0.22, Math.sin(0.6) * 0.01, Math.sin(0.13) * 0.12].map((x) => Math.round(x * 1e6) / 1e6);
-out.flips = [screenBright(0.1), screenBright(0.5), screenBright(0.9), screenBright(1.2)];
-let range = [9, -9, 9, -9];
-for (let t = 0; t < 10; t += 0.005) { const p = pose(t); range = [Math.min(range[0], p.left), Math.max(range[1], p.left), Math.min(range[2], p.bob), Math.max(range[3], p.bob)]; }
-out.range = range.map((x) => Math.round(x * 1000) / 1000);
-
 // the beacon
 const ring = { scale: { x: 1, y: 1, z: 1, set(x, y, z) { this.x = x; this.y = y; this.z = z; } } };
 const mat = { opacity: 1 };
@@ -254,19 +250,16 @@ def test_the_camera_moves_as_the_prototypes_loop_does_frame_by_frame_and_lands_e
 
 
 @needs_node
-def test_the_working_figure_and_the_beacon_are_the_prototypes_functions(tmp_path):
+def test_the_beacon_is_the_prototypes_function(tmp_path):
+    # R-24 and R-41: the working figure's pose (forearms, bob, turn, the screen's flip) went with the figure; the owl's motions are owl-motion.js
     got = run_node(tmp_path, PROTOTYPE)
-    assert got["pose"] == got["expected"], "forearms 0.22 sin(11 t) and the second 2 rad behind, the bob 0.01 sin(6 t), the turn 0.12 sin(1.3 t)"
-    assert got["flips"] == [True, False, False, True] or len(set(got["flips"])) == 2, "the screen flips between its two tones, 1.43 a second"
-    assert got["range"] == [-0.22, 0.22, -0.01, 0.01]
     scale, flat, opacity, pulse_scale, pulse_opacity = got["beacon"]
     assert scale == pulse_scale and flat == 1 and opacity == pulse_opacity, "the City's beacon is prototype-motion's `beaconPulse`"
 
 
 def test_the_product_calls_the_prototypes_functions_and_keeps_the_rules_around_them():
     motion = (SCENE / "prototype-motion.js").read_text(encoding="utf-8")
-    for line in ("Math.exp(-dt * rate)", "t * t * (3 - 2 * t)", "Math.sin(t * TYPING_RATE)", "Math.sin(t * BOB_RATE)", "Math.sin(t * TURN_RATE)", "Math.sin(t * SCREEN_RATE) > 0",
-                 "CAMERA_RATE = 4.5", "EXPLODE_RATE = 3.2", "MAX_DT = 0.05", "BEACON_RATE = 3"):
+    for line in ("Math.exp(-dt * rate)", "t * t * (3 - 2 * t)", "CAMERA_RATE = 4.5", "EXPLODE_RATE = 3.2", "MAX_DT = 0.05", "BEACON_RATE = 3"):
         assert line in motion, f"the prototype's line: {line}"
     assert "document" not in motion and "import" not in motion, "pure: no page, no three.js"
     tween = (SCENE / "tween.js").read_text(encoding="utf-8")
@@ -274,9 +267,9 @@ def test_the_product_calls_the_prototypes_functions_and_keeps_the_rules_around_t
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     world = (SCENE / "world.js").read_text(encoding="utf-8")
     assert "approach(tower.open, tower.target, dt, EXPLODE_RATE)" in world and "approach(v, tower.visTarget[i], dt, VIS_RATE)" in world
-    assert 'loop.start("beacon", { ambient: true })' in engine and 'loop.start("camera", { ambient: false })' in engine, "typing and the beacon stay at 30 frames a second, a camera move runs every frame"
+    assert 'loop.start("beacon", { ambient: true })' in engine and 'loop.start("camera", { ambient: false })' in engine, "the owl and the beacon stay at 30 frames a second, a camera move runs every frame"
     for forbidden in ("Math.random", "spark", "particle"):
-        assert forbidden not in motion + (SCENE / "figure.js").read_text(encoding="utf-8")
+        assert forbidden not in motion + (SCENE / "owl-motion.js").read_text(encoding="utf-8")
 
 
 # --- the Building: no Control room label over the floors; plates on the desktop, the card on the phone ------------------------------
@@ -321,92 +314,21 @@ def test_the_building_has_a_plate_for_each_floor_and_no_control_room_label_and_t
         "a hover that came from the scene never tells the engine again: hovering the door (no floor) used to clear the outline the pick had just drawn"
 
 
-# --- review fixes: the working motion, the hovered outline that moves with it, the phone card's room ----------------------------------
+# --- review fixes: the phone card's room --------------------------------------------------------------------------------------------------
 
-WORKING = r"""
-import * as THREE from "@JS@/three.js";
-import { createKit } from "@JS@/scene/kit.js";
-import { figure, workingMotion, scanY } from "@JS@/scene/figure.js";
-import { desk } from "@JS@/scene/furniture.js";
-import { outlineGeometry } from "@JS@/scene/outline.js";
-import { buildWorld } from "@JS@/scene/world.js";
-import { workingPose, screenBright } from "@JS@/scene/prototype-motion.js";
+INSETS = r"""
 import { fitInsets, cornerPosition } from "@JS@/scene/labels.js";
-
-const c = (hex) => new THREE.Color(hex);
-const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050), mutedRole: c(0x707070) };
-const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), leafB: c(0x70b070), trunk: c(0x806040),
-  lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
 const out = {};
-const kit = createKit(palette);
-const parent = new THREE.Group();
-const d = desk(kit, parent, 1.4, -1.35, "working", 1.8);
-const who = figure(kit, parent, "working", 1.5, -0.62, Math.PI);
-const motion = workingMotion(who, d, palette);
-parent.updateMatrixWorld(true);
-const [left, right] = who.parts.elbows;
-const hex = () => d.screen.material.color.getHex();
-const snap = () => ({ left: left.elbow.rotation.x, right: right.elbow.rotation.x, bob: who.group.position.y, turn: who.parts.body.rotation.y, scan: d.scan.position.y, screen: hex() });
-const flat = (g) => Array.from(g.getAttribute("position").array);
-out.rest0 = snap();
-out.outline0 = flat(outlineGeometry(THREE, who.group, 0.04));
-motion.tick(0.1);
-out.t01 = snap();
-out.p01 = workingPose(0.1);
-out.bright01 = screenBright(0.1);
-out.outline1 = flat(outlineGeometry(THREE, who.group, 0.04));
-motion.tick(0.5);
-out.t05 = snap();
-out.bright05 = screenBright(0.5);
-out.scan05 = scanY(0.5);
-out.scan0 = scanY(0);
-motion.rest();
-out.rest1 = snap();
-out.outline2 = flat(outlineGeometry(THREE, who.group, 0.04));
-out.theme = T.theme.getHex();
-out.dimmer = palette.mix(T.theme, palette.ink, 0.2).getHex();
-// the room: the working agent and desk move, a resting one does not
-const roomOf = (state) => {
-  const l = { id: "a", name: "a", accepted: true, decisions: 0, runningTask: null, tip: "t", sub: "s", selected: null, tag: null,
-    floors: [{ name: "business", label: "business", state, window: "grey", decisions: 0, lobby: false, sheets: [{ path: "docs/a.md", tip: "a" }], drawers: 1, tip: "t", interactive: true, plate: null }] };
-  const w = buildWorld(kit, { ready: true, selectedId: null, marked: null, outlined: null, focus: null, floor: null, frame: null, room: null, lots: [l] });
-  w.setFocus("a", true);
-  w.update({ ready: true, selectedId: null, marked: null, outlined: null, focus: "a", floor: "business", frame: null, room: { tips: { agent: "a", desk: "d", tray: "t" }, board: null, door: false }, lots: [l] });
-  w.setFloors("business", null, true);
-  return w;
-};
-out.moves = Object.fromEntries(["working", "idle"].map((s) => [s, roomOf(s).hits.map((h) => [h.id, Boolean(h.moves)])]));
 // the phone's card: the scene is fitted below it
 out.insets = [fitInsets({ top: 80, right: 70, cornerRight: 10 }, 78, 8), fitInsets({ top: 80, right: 70, cornerRight: 10 }, 0), fitInsets({ top: 64, right: 300 }, 90), fitInsets(undefined, 50)];
 out.corner = cornerPosition({ w: 375, h: 300 }, { top: 80, right: 70, cornerRight: 10 });
-kit.dispose();
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_a_working_figure_types_bobs_and_turns_its_screen_flips_and_rest_puts_the_pose_back(tmp_path):
-    got = run_node(tmp_path, WORKING)
-    r0, t1, t5, r1, p = got["rest0"], got["t01"], got["t05"], got["rest1"], got["p01"]
-    assert r0["left"] == r0["right"] == -1 and r0["bob"] == 0 and r0["turn"] == 0 and r0["screen"] == got["theme"], "the pose at rest"
-    assert abs(t1["left"] - (-1 + p["left"])) < 1e-9 and abs(t1["right"] - (-1 + p["right"])) < 1e-9 and t1["left"] != t1["right"], "the forearms swing, the second 2 rad behind"
-    assert abs(t1["bob"] - p["bob"]) < 1e-9 and abs(t1["turn"] - p["turn"]) < 1e-9 and t1["bob"] != 0 and t1["turn"] != 0, "the body bobs and the upper body turns"
-    assert got["bright01"] is True and t1["screen"] == got["theme"], "the screen on its bright tone at 0.1 s"
-    assert got["bright05"] is False and t5["screen"] == got["dimmer"] != got["theme"], "and on the dimmer one at 0.5 s: it flips"
-    assert abs(t5["scan"] - got["scan05"]) < 1e-9, "the scan line follows its slow sine"
-    assert {**r1, "scan": 0} == {**r0, "scan": 0} and abs(r1["scan"] - got["scan0"]) < 1e-9, "rest() restores the pose, the bob, the turn and the screen, and puts the scan line at its resting row"
-    assert got["outline0"] != got["outline1"], "the figure's outline made at rest is not the outline of the typing figure: it has to be made again while it works"
-    assert got["outline2"] == got["outline0"], "and it is the same again at rest"
-    assert got["moves"]["working"] == [["agent", True], ["desk", True], ["tray", False], ["sheet:docs/a.md", False]] and all(m is False for _, m in got["moves"]["idle"]), \
-        "only a working agent's figure and desk are marked as moving"
-    engine = (SCENE / "engine.js").read_text(encoding="utf-8")
-    assert "if (hoveredHit() && hoveredHit().moves) refreshOutline();" in engine and "      refreshOutline();\n      if (!moving) {" in engine, \
-        "the hovered outline is made again on a motion tick when the hovered object moves, and while the floors separate"
-
-
-@needs_node
 def test_the_phone_scene_is_fitted_below_the_corner_card_and_only_there(tmp_path):
-    got = run_node(tmp_path, WORKING)
+    got = run_node(tmp_path, INSETS)
     assert got["insets"][0] == {"top": 166, "right": 70, "cornerRight": 10}, "card height 78 + 8 gap added under the card's top inset"
     assert got["insets"][1] == {"top": 80, "right": 70, "cornerRight": 10}, "no card, nothing added"
     assert got["insets"][2] == {"top": 64, "right": 300} and got["insets"][3] == {}, "desktop and tablet (no corner inset) are fitted as before"

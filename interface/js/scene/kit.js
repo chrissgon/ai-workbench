@@ -117,6 +117,16 @@ export function createKit(palette) {
           quad([x, y0, z1], [x, y0, z0], [x, y1, z0], [x, y1, z1], tone);
           return batch;
         },
+        /** A quad of four corners a, b, c, d ([x, y, z] each, counter-clockwise from the camera), in one tone. */
+        quad(a, b, c, d, tone) {
+          quad(a, b, c, d, tone);
+          return batch;
+        },
+        /** A triangle of three corners, in one tone. */
+        tri(a, b, c, tone) {
+          for (const p of [a, b, c]) vertex(p, tone);
+          return batch;
+        },
         count: () => position.length / 9,
         mesh(parent, o = {}) {
           if (!position.length) return null;

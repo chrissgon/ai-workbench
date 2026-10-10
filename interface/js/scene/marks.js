@@ -68,3 +68,52 @@ export function bracketSet(kit, ground = 0.22) {
   atRoof.mesh(roof, { cast: false });
   return { group, roof };
 }
+
+// --- the brackets of a picked object and of a room (R-28, R-31) ----------------------------------------------------------------------------
+// The City's mark of a selected building, on a room or an object of a room: four corners round its base and four at its top, each of those with a short line down,
+// drawn as real solids so that the depth hides a corner behind the object and the floor above hides one under its slab. A flat object, the task board and the door, takes
+// four corners in the plane it stands in. They are made in page units (room-frame.js) in the brand colour and hidden until the engine shows them.
+
+const BRACKET_WIDTH = 0.1;
+const LIFT = 0.03;
+
+/**
+ * Eight brackets round the box x0..x1, z0..z1, y0..y1 (page units): an L at each base corner, and at each top corner an L with a line `drop` down. `arm` is how far an
+ * arm runs along an edge. `makeBatch` wraps a batch in page units (`pageBatch`). Returns one mesh (unlit, in `tone`) for the caller to put in a hidden group; the engine shows it.
+ */
+export function boxBrackets(kit, makeBatch, { x0, x1, z0, z1, y0, y1, arm, drop, tone }) {
+  const batch = kit.batch();
+  const pb = makeBatch(batch);
+  const w = BRACKET_WIDTH;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const cx = sx < 0 ? x0 : x1;
+      const cz = sz < 0 ? z0 : z1;
+      for (const [y, down] of [[y0 + LIFT, 0], [y1, drop]]) {
+        // an L: one arm along x and one along z, from the corner toward the middle
+        pb.flat(tone, sx < 0 ? cx - w / 2 : cx - arm, cz - w / 2, sx < 0 ? cx + arm : cx + w / 2, cz + w / 2, y);
+        pb.flat(tone, cx - w / 2, sz < 0 ? cz - w / 2 : cz - arm, cx + w / 2, sz < 0 ? cz + arm : cz + w / 2, y);
+        if (down) pb.box(tone, cx - w / 2, y - down, cz - w / 2, w, down, w);
+      }
+    }
+  }
+  return batch.mesh(new kit.THREE.Group(), { cast: false });
+}
+
+/**
+ * Four corners round a rectangle standing in a wall: the back wall (`plane: "z"`, at z) or the left wall (`plane: "x"`, at x), from a0..a1 along the wall and y0..y1 up it;
+ * each corner has an arm along the wall and an arm up. Returns one mesh, as `boxBrackets` does.
+ */
+export function planeBrackets(kit, makeBatch, { plane, at, a0, a1, y0, y1, arm, tone }) {
+  const batch = kit.batch();
+  const pb = makeBatch(batch);
+  const w = BRACKET_WIDTH;
+  const rect = plane === "z" ? (u0, v0, u1, v1) => pb.front(tone, u0, v0, u1, v1, at) : (u0, v0, u1, v1) => pb.side(tone, u0, v0, u1, v1, at);
+  for (const [u, du] of [[a0, 1], [a1, -1]]) {
+    for (const [v, dv] of [[y0, 1], [y1, -1]]) {
+      rect(Math.min(u, u + du * arm), Math.min(v, v + dv * w), Math.max(u, u + du * arm), Math.max(v, v + dv * w));
+      rect(Math.min(u, u + du * w), Math.min(v, v + dv * arm), Math.max(u, u + du * w), Math.max(v, v + dv * arm));
+    }
+  }
+  return batch.mesh(new kit.THREE.Group(), { cast: false });
+}

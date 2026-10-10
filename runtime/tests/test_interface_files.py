@@ -318,7 +318,8 @@ def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_
 
 FLOOR_FILES = ("floor-model.js", "floor/actions.js", "floor/agent-tab.js", "floor/cards.js", "floor/desk-tab.js", "floor/inbox.js",
                "floor/viewer.js", "floor/widgets.js", "views/building.js", "views/floor.js",
-               "scene/building.js", "scene/world.js", "scene/tower.js", "scene/figure.js", "scene/furniture.js", "scene/plates.js")
+               "scene/building.js", "scene/world.js", "scene/tower.js", "scene/furniture.js", "scene/plates.js",
+               "scene/owl-build.js", "scene/owl-motion.js", "scene/room-frame.js", "scene/room-words.js")   # R-41, R-23: the figure is gone, the owl and the room's measures are new
 
 
 def test_the_building_and_the_floor_are_files_of_the_page_and_the_page_routes_to_them():
@@ -367,9 +368,11 @@ def test_the_ids_the_scenes_register_are_the_ids_the_screens_open():
     floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
     building_view = (INTERFACE / "js" / "views" / "building.js").read_text(encoding="utf-8")
     for hit in re.findall(r'hits\.push\(\{[^}]*id: "([a-z-]+)"', room):
-        if hit in ("agent", "desk", "tray"):
+        if hit in ("agent", "desk", "tray", "tasks"):
             assert f'"{hit}"' in floor_view, f"the Floor opens something for the room's {hit}"
-    assert "sheet:" in room and "sheet:" in floor_view
+    # R-31: the room's ways in are the owl (`agent`, or `tray` when it asks something), the board (`tasks`) and the bookcase (`desk`); a document is no longer an object of its own
+    # (R-23: no table of sheets). The board is a way in (R-23b, R-31): the Floor and the Lobby open the Tasks tab for its id `tasks` (the loop above).
+    assert '"tasks"' in room and 'asks ? "tray" : "agent"' in room and "sheet:" not in room
     assert "floor:" in building and "floor:" in building_view and '"door"' in building and "door" in building_view
 
 

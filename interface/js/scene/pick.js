@@ -9,11 +9,11 @@
 // A mesh that is not pickable never blocks the pick: a tree, a slab or another object's wall in front of a pickable object is ignored,
 // so the pointer on a tree in front of a lot names the lot behind it, by design (the HTML list has the same objects).
 
-/** The visible meshes under `object` (a hidden node hides its subtree), nearest-owner not decided here. */
+/** The visible meshes under `object` (a hidden node hides its subtree, and a group of brackets is no part of what it holds), nearest-owner not decided here. */
 export function pickableMeshes(object) {
   const out = [];
   const walk = (node) => {
-    if (!node.visible) return;
+    if (!node.visible || (node.userData && node.userData.brackets)) return;   // a hidden node hides its subtree; the brackets of a hit (`userData.brackets`) are drawn, never picked
     if (node.isMesh) out.push(node);
     for (const child of node.children) walk(child);
   };
