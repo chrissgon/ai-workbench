@@ -921,7 +921,7 @@ def test_the_lobbys_agent_tab_is_the_floors_for_the_planning_agent_and_sends_one
     assert agent["model"] == [True, [12, 13], [5, 4]], "its decisions are those on a request and its own; the engineering agent's task is not its task"
     assert agent["state"].startswith("Waiting for you") and "2 decisions in the Inbox" in agent["state"]
     assert agent["plate"].startswith("supervised") and "Every review reaches you" in agent["plate"]
-    assert agent["meters"] == ["Reference-model runs today 3 / 12", "Floor-model spend today $0.25 / $2.00", "Queued 1"]
+    assert agent["meters"] == ["Runs today 3 / 12", "Spend today $0.25 / $2.00", "Queued 1"]
     assert agent["current"].startswith("#4 Task 4Running") and agent["others"] == ["#5 Task 5FailedRetry"]
     assert agent["reads"] == ["4", "5"], "the running task's body is read; the others' only while the Inbox is open, and the task a file would go to (here the failed 5) once, for its file-drop line (A-30)"
     assert agent["changed"] is True and agent["none"] is True and agent["form"] == "Stop agent"

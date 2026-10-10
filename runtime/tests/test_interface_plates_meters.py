@@ -347,17 +347,17 @@ console.log(JSON.stringify(out));
 @needs_node
 def test_the_meters_say_which_model_they_count_and_the_caps_line_uses_the_same_words(tmp_path):
     got = run_node(tmp_path, METERS)
-    assert got["words"] == {"runs": "Reference-model runs today", "spend": "Floor-model spend today"}
-    assert got["agent"]["runs"][:2] == ["Reference-model runs today", "0 / 8"] and got["agent"]["spend"][:2] == ["Floor-model spend today", "$0.14 / $2.00"]
-    assert "reference model" in got["agent"]["runs"][2] and "runs per day" in got["agent"]["runs"][2] and "floor model" in got["agent"]["runs"][2], "a tooltip sentence that says what the cap counts"
-    assert "floor model" in got["agent"]["spend"][2] and "dollars per day" in got["agent"]["spend"][2]
-    assert got["agent"]["names"] == ["Reference-model runs today 0 / 8", "Floor-model spend today $0.14 / $2.00"]
-    assert got["card"].startswith("reference-model runs 3 / 8 · floor-model spend $0.14 / $2.00")
-    assert [t[0] for t in got["plate"]] == ["Reference-model runs today 3 / 8", "Floor-model spend today $0.14 / $2.00"] and all(t[1] for t in got["plate"])
-    assert [k[2] for k in got["kpis"]] == ["Open decisions", "Reference-model runs today", "Floor-model spend today"]
-    assert got["kpis"][1][0] == "Reference-model runs today 17 of 70" and got["kpis"][2][0] == "Floor-model spend today $4.90 of $21.50 cap"
-    assert got["caps"]["text"] == "Caps · engineering: reference-model runs 5 / 12, floor-model spend $1.87 / $4.00"
-    assert "reference model" in got["caps"]["title"] and "floor model" in got["caps"]["title"]
+    assert got["words"] == {"runs": "Runs today", "spend": "Spend today"}
+    assert got["agent"]["runs"][:2] == ["Runs today", "0 / 8"] and got["agent"]["spend"][:2] == ["Spend today", "$0.14 / $2.00"]
+    assert "subscription or free credential" in got["agent"]["runs"][2] and "runs per day" in got["agent"]["runs"][2], "a tooltip sentence that says what the cap counts: the billing"
+    assert "metered credential" in got["agent"]["spend"][2] and "dollars per day" in got["agent"]["spend"][2]
+    assert got["agent"]["names"] == ["Runs today 0 / 8", "Spend today $0.14 / $2.00"]
+    assert got["card"].startswith("runs 3 / 8 · spend $0.14 / $2.00")
+    assert [t[0] for t in got["plate"]] == ["Runs today 3 / 8", "Spend today $0.14 / $2.00"] and all(t[1] for t in got["plate"])
+    assert [k[2] for k in got["kpis"]] == ["Open decisions", "Runs today", "Spend today"]
+    assert got["kpis"][1][0] == "Runs today 17 of 70" and got["kpis"][2][0] == "Spend today $4.90 of $21.50 cap"
+    assert got["caps"]["text"] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00"
+    assert "subscription or free credential" in got["caps"]["title"] and "metered credential" in got["caps"]["title"]
 
 
 # --- A-17: Stop agent and Supervise, A-18 in the tab, A-10 in the current-task block -----------------------------------------------------
@@ -441,7 +441,7 @@ def test_the_agent_tab_stops_and_supervises_with_two_buttons_shows_the_held_sent
     assert "A wider mode is set in the terminal" in got["wider"], "a wider mode is the terminal's"
     assert got["standing"] != "Setting a mode changes the project's configuration. Every action of this page then refuses until you accept the new configuration in the terminal.", \
         "the standing notice would be false now: a narrowing is accepted at once"
-    assert got["meters"] == ["Reference-model runs today 5 / 12", "Floor-model spend today $1.87 / $4.00", "Queued 1"] and got["meterTitles"][:2] == [True, True]
+    assert got["meters"] == ["Runs today 5 / 12", "Spend today $1.87 / $4.00", "Queued 1"] and got["meterTitles"][:2] == [True, True]
     assert got["stop"]["calls"] == [["setMode", "p", "engineering", "stopped"]], "one request with the word of the button"
     assert got["stop"]["refreshed"] == 1 and got["stop"]["commands"] == 0 and "Mode set to stopped" in got["stop"]["result"] and "Nothing works" not in got["stop"]["result"]
     assert got["afterStop"] == [True, True], "already stopped: both are off"
@@ -711,16 +711,16 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     assert got["old"] == ["", 0.25, 0, None], "an entry with no split (an older service) is all recorded"
     p = got["plate"]
     assert p["note"] == ["$0.14 recorded · up to $1.50 reserved"] and p["fills"] == 1 and p["reserved"] == 1 and p["has"] is True and p["first"] == 0, "the second meter of the plate has the second segment"
-    assert got["cardLine"].endswith("floor-model spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved)")
+    assert got["cardLine"].endswith("spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved)")
     assert [round(x, 6) for x in got["sums"]] == [1.84, 0.34, 1.5, 4]
     assert got["kpi"]["note"] == ["$0.34 recorded · up to $1.50 reserved"] and got["kpi"]["reserved"] == 1 and "up to $1.50 reserved" in got["kpi"]["aria"]
     assert "Runs today: 4" in got["kpi"]["runsTitle"]
     assert got["kpiNoReserve"] == [""], "nothing reserved: no second number, the line is empty"
-    assert got["caps"]["text"] == "Caps · engineering: reference-model runs 5 / 8, floor-model spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), Runs today: 3"
-    assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "Runs today: 3", "aria": "Floor-model spend today $1.64 / $2.00"}
+    assert got["caps"]["text"] == "Caps · engineering: runs 5 / 8, spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), Runs today: 3"
+    assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "Runs today: 3", "aria": "Spend today $1.64 / $2.00"}
     assert got["during"] is True and got["after"] == [False, "Runs today: 3"], "the total is shown again after a not-accepted spell"
     both = "$0.14 recorded (+2 of unknown cost)"
-    assert got["unknown"]["tab"] == both and got["unknown"]["plate"] == [both] and got["unknown"]["card"].endswith("floor-model spend $0.14 / $2.00 ($0.14 recorded) (+2 of unknown cost)"), "both notes when both apply"
+    assert got["unknown"]["tab"] == both and got["unknown"]["plate"] == [both] and got["unknown"]["card"].endswith("spend $0.14 / $2.00 ($0.14 recorded) (+2 of unknown cost)"), "both notes when both apply"
     assert got["unknown"]["reserved"] == "$0.14 recorded · up to $1.50 reserved", "when something is reserved the reservation already says so"
 
 

@@ -289,8 +289,10 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
         "a decision with no agent (a project with no area agents, or a decision on a request) is the lobby's"
     assert by_id[12][5] == "Question, Which tone?, shop, Brand, waiting 5 hours"
     assert got["waitingScoped"] == [21]
-    assert got["kpi"][0] == {"decisions": 4, "runs": 5, "runsCap": 50, "usd": 2.5, "usdCap": 12.5, "usdRecorded": 2.5, "usdReserved": 0, "runsTotal": 0}
-    assert got["kpi"][1] == {"decisions": 1, "runs": 0, "runsCap": 0, "usd": 0, "usdCap": 0, "usdRecorded": 0, "usdReserved": 0, "runsTotal": 0}
+    assert got["kpi"][0] == {"decisions": 4, "runs": 5, "runsCap": 50, "usd": 2.5, "usdCap": 12.5, "usdRecorded": 2.5, "usdReserved": 0, "runsTotal": 0,
+                             "inUse": {"runs": True, "spend": True}}  # no caps_in_use sent (an older service): both meters
+    assert got["kpi"][1] == {"decisions": 1, "runs": 0, "runsCap": 0, "usd": 0, "usdCap": 0, "usdRecorded": 0, "usdReserved": 0, "runsTotal": 0,
+                             "inUse": {"runs": True, "spend": True}}  # a project with no agent shows both
     # the tracking bar: titles from the task, the agent from the task, the running run's start, floor numbers from the agents
     tracking = got["tracking"]
     assert tracking["request"] == {"id": 1, "title": "Spring", "state": "ready", "project": "shop", "projectId": "aaaaaaaaaaaa"}
@@ -459,7 +461,7 @@ def test_every_control_of_the_frame_has_an_accessible_name_and_the_names_say_wha
     assert got["regionsUnnamed"] == [], "every region, group and navigation is named"
     assert got["styleOrEvent"] == [] and got["badLinks"] == [], "no style or event attribute; every link is a hash link of this page"
     names = got["names"]
-    assert names["kpis"] == ["Open decisions 7 waiting for you", "Reference-model runs today 17 of 70", "Floor-model spend today $4.90 of $21.50 cap"]
+    assert names["kpis"] == ["Open decisions 7 waiting for you", "Runs today 17 of 70", "Spend today $4.90 of $21.50 cap"]
     assert names["back"] == "Back" and names["nav"] == "Breadcrumbs" and names["chevron"] == "Choose a project"
     assert names["crumbs"] == ["City"]
     assert names["main"] == "northwind-shop, project 1 of 2, go to the next project"
@@ -474,7 +476,7 @@ def test_every_control_of_the_frame_has_an_accessible_name_and_the_names_say_wha
     assert got["backDisabled"] is True and got["waitMenuHiddenOnCity"] is True, "Back is disabled on the City and the waiting button is the City card's"
     assert got["floor"] == {"crumbs": ["City", "northwind-shop", "current:Marketing"], "backDisabled": False, "waitMenuHidden": False, "screen": "floor"}
     assert got["control"] == {"selected": True}
-    assert got["loading"]["kpis"] == ["Open decisions, loading", "Reference-model runs today, loading", "Floor-model spend today, loading"] and got["loading"]["unnamed"] == 0
+    assert got["loading"]["kpis"] == ["Open decisions, loading", "Runs today, loading", "Spend today, loading"] and got["loading"]["unnamed"] == 0
     assert "Nothing waits for you." in got["empty"] and "Loading the request..." in got["empty"]
 
 

@@ -239,7 +239,7 @@ export function progress(p, { since, signal } = {}) {
   return send("GET", `/projects/${enc(p)}/progress`, { query: { since }, signal });
 }
 
-/** GET /projects/{p}/agents: {agents: [{name, pack, enabled, mode, acting_mode, max_runs_per_day, max_usd_per_day, runs_today, usd_today, queued, ...}]}. */
+/** GET /projects/{p}/agents: {agents: [{name, pack, enabled, mode, acting_mode, max_runs_per_day, max_usd_per_day, runs_today (runs on a subscription or free credential), usd_today (spend of runs on a metered one), billing, caps_in_use: {runs, spend}, queued, ...}]}. */
 export function agents(p, options) {
   return send("GET", `/projects/${enc(p)}/agents`, options);
 }

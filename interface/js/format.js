@@ -72,7 +72,7 @@ export function decisions(n) {
 }
 
 /**
- * The day's floor-model spend in words, both numbers labelled: "$0.14 recorded · up to $1.50 reserved" (the reserved part only when
+ * The day's metered spend in words, both numbers labelled: "$0.14 recorded · up to $1.50 reserved" (the reserved part only when
  * something is reserved for a run whose cost is not recorded yet), "$0.14 recorded", or "" when both are zero.
  */
 export function spendNote(recorded, reserved) {
@@ -91,10 +91,20 @@ export function costNote(spendWords, reserved, unknown) {
   return [spendWords, missing].filter(Boolean).join(" ");
 }
 
-// The words of the two caps (A-20), and the sentence that says what each one counts: the runs cap counts the reference model's runs, the
-// dollar cap the floor model's spend, so the two never read as one.
-export const METER_WORDS = Object.freeze({ runs: "Reference-model runs today", spend: "Floor-model spend today" });
+// The words of the two caps (A-20, A-38), and the sentence that says what each one counts: a cap follows the billing of the credential a run
+// used, not the model's tier. The runs cap counts runs on a subscription or free credential, the dollar cap the spend of runs on a metered
+// one (an API key), so the two never read as one.
+export const METER_WORDS = Object.freeze({ runs: "Runs today", spend: "Spend today" });
 export const METER_TIPS = Object.freeze({
-  runs: "Counted against the cap of runs per day: only runs on the reference model. Runs on the floor model are not counted here.",
-  spend: "Counted against the cap of dollars per day: only the floor model's spend. A run whose cost is not recorded yet counts at the per-run limit.",
+  runs: "Counted against the cap of runs per day: runs on a subscription or free credential.",
+  spend: "Counted against the cap of dollars per day: runs on a metered credential (an API key); a run whose cost is not recorded yet counts at the per-run limit.",
 });
+/**
+ * Which of the two meters mean something for a project: {runs, spend}. The service says it per agent (`caps_in_use` of the `agents` read: whether
+ * the project's credentials, or a run of today, have that billing). Only an explicit false hides a meter; an entry without it (an older service)
+ * shows both.
+ */
+export function metersInUse(source) {
+  const use = source && typeof source === "object" && source.caps_in_use && typeof source.caps_in_use === "object" ? source.caps_in_use : {};
+  return { runs: use.runs !== false, spend: use.spend !== false };
+}

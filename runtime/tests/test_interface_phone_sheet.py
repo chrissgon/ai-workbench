@@ -598,5 +598,5 @@ def test_the_decisions_tile_has_a_whole_sentence_for_a_title_since_the_phone_doe
     got = run_node(tmp_path, KPI)
     assert got["one"][0] == ["1 open decision waiting for you", "Open decisions 1 waiting for you"]
     assert got["seven"] == "7 open decisions waiting for you"
-    assert got["one"][1][1] == "Reference-model runs today 3 of 20" and got["one"][2][1].startswith("Floor-model spend today $1.20 of $5.00"), \
+    assert got["one"][1][1] == "Runs today 3 of 20" and got["one"][2][1].startswith("Spend today $1.20 of $5.00"), \
         "the runs and the spend tiles keep the cap in their name when the phone does not draw it"

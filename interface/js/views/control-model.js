@@ -223,10 +223,11 @@ export function footnote(rows) {
 }
 
 /**
- * The caps line: "Caps · engineering: runs 5 / 12, $1.87 / $4.00". The limits are `costs.caps`; what was used today is
- * `runs_today` and `usd_today` of `agents` (a second read). "runs" count the reference model's runs and "$" the floor
- * model's dollars, said in the title and the accessible name. Returns {text, title} or null when there is no cap.
- * `agents` may be null (that read failed): the used amounts are then "-".
+ * The caps line: "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00". The limits are `costs.caps`; what was used today is
+ * `runs_today` and `usd_today` of `agents` (a second read). "runs" count the runs on a subscription or free credential and "spend" the dollars
+ * of runs on a metered one, said in the title and the accessible name. A part whose cap is not in use for the agent (`caps_in_use`, A-38) is
+ * left out. Returns {text, title} or null when there is no cap.
+ * `agents` may be null (that read failed): the used amounts are then "-", and both parts are shown.
  */
 export function capsLine(caps, agents) {
   const list = Array.isArray(caps) ? caps : [];
@@ -238,7 +239,10 @@ export function capsLine(caps, agents) {
     const now = used.get(cap.agent);
     const note = now && typeof now.usd_reserved === "number" ? format.spendNote(now.usd_recorded, now.usd_reserved) : "";
     const total = now && typeof now.runs_total_today === "number" ? `, Runs today: ${now.runs_total_today}` : "";
-    return `${agentLabel(cap.agent)}: reference-model runs ${now ? amount(now.runs_today) : "-"} / ${amount(cap.max_runs_per_day)}, floor-model spend ${now ? money(now.usd_today) : "-"} / ${money(cap.max_usd_per_day)}${note ? ` (${note})` : ""}${total}`;
+    const use = format.metersInUse(now);
+    const shown = [use.runs ? `runs ${now ? amount(now.runs_today) : "-"} / ${amount(cap.max_runs_per_day)}` : "",
+      use.spend ? `spend ${now ? money(now.usd_today) : "-"} / ${money(cap.max_usd_per_day)}${note ? ` (${note})` : ""}` : ""].filter(Boolean);
+    return `${agentLabel(cap.agent)}: ${shown.join(", ")}${total}`;
   });
   return { text: `Caps · ${parts.join("; ")}`, title: `${format.METER_TIPS.runs} ${format.METER_TIPS.spend}` };
 }
