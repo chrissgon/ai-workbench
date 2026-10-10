@@ -236,7 +236,7 @@ The names fixed for this work. Use each exactly.
 | Autonomy modes | `stopped`, `supervised`, `milestones` (the default), `autonomous`, `autonomous-with-policy` |
 | Tiers | `strong` (the reference model) and `floor` (the floor model), both named only in `evals/eval-gate.json` |
 | Reference model, floor model | The strong and the inexpensive model of the gate file; no file of `runtime/` names one |
-| Spend split | The day's floor spend as `autonomy.spend_split` gives it: `usd_recorded` (the recorded costs) and `usd_reserved` (`max_cost_usd_per_run` for each floor run without a recorded cost); their sum is what the dollars cap compares |
+| Spend split | The day's metered spend as `autonomy.spend_split` gives it: `usd_recorded` (the recorded costs) and `usd_reserved` (`max_cost_usd_per_run` for each metered run without a recorded cost); their sum is what the dollars cap compares, and `runs_counted` (subscription and free runs) what the runs cap compares |
 | Proof | What the status script computes for a skill on a model and adapter; the runtime keeps a copy in `<data_dir>/proof.json` and routes by it |
 | Proof file | That copy: a cache in the data folder, never a source, never committed |
 | Band | A skill's standing on a model, computed by rules from lab evidence: `needs a test`, `watch` or `reliable` ([reliability model](../reliability-model-2026-10-02.md), section 5) |
