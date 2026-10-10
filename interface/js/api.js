@@ -1,5 +1,6 @@
 // The client of the local service (runtime/service.py): one function per route of its ROUTES table, named after the
-// operation. Each sends the token as "Authorization: Bearer", a POST sends "Content-Type: application/json", and
+// operation. Each sends the token as "Authorization: Bearer" (one exception, tokenFile: the read of the token file's path, before the page
+// has a token, sends none), a POST sends "Content-Type: application/json", and
 // only a route that takes a query (progress, conversation, costs, artifact, artifact/raw) is sent one. An error body {error, message} becomes an ApiError with
 // the status and the word. A route whose operation calls a model or a platform answers 202 with a job: the function
 // returns that job and pollJob(job.job, every) asks for it again until it is done or failed. The token is read from
@@ -9,6 +10,7 @@
 import { getToken } from "./token.js";
 
 const PREFIX = "/api/v1";
+const TOKEN_FILE = "/token-file";   // the one path outside PREFIX: it needs no token, so the page can show where the token file is before it has one
 
 // The words the service gives an error (runtime/service.py WORDS), by status, for a body that carries none.
 const WORD_OF_STATUS = {
@@ -63,12 +65,13 @@ export function onWrite(fn) {
 const enc = (part) => encodeURIComponent(String(part));
 
 async function send(method, path, options = {}) {
+  const open = options.open === true;   // the unauthenticated read below: no bearer header, and no token needed
   const token = getToken();
-  if (!token) {
+  if (!token && !open) {
     if (authFailure) authFailure();
     throw new ApiError(401, "token", "There is no token yet.");
   }
-  let url = PREFIX + path;
+  let url = (open ? "" : PREFIX) + path;
   if (options.query) {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(options.query)) {
@@ -77,7 +80,8 @@ async function send(method, path, options = {}) {
     const text = query.toString();
     if (text) url += "?" + text;
   }
-  const headers = { Authorization: `Bearer ${token}`, Accept: options.raw ? "image/*" : "application/json" };
+  const headers = { Accept: options.raw ? "image/*" : "application/json" };
+  if (!open) headers.Authorization = `Bearer ${token}`;
   const init = {
     method, headers, credentials: "omit", cache: "no-store", redirect: "error", mode: "same-origin",
     referrerPolicy: "no-referrer", signal: options.signal,
@@ -119,11 +123,20 @@ async function send(method, path, options = {}) {
     const message = (data && typeof data.message === "string" && data.message) || word;
     const next = data && typeof data.next === "string" && data.next ? data.next : null;
     const failure = new ApiError(response.status, word, message, next);
-    if (failure.unauthorized && authFailure) authFailure();
+    if (failure.unauthorized && authFailure && !open) authFailure();
     throw failure;
   }
   if (data === null || typeof data !== "object") throw new ApiError(response.status, "internal", "The service answered with something that is not JSON.");
   return data;
+}
+
+/**
+ * GET /token-file, before the page holds a token: {token_file, commands: {macos, linux, powershell}}, the absolute path of the token
+ * file and the commands, built by the service, that read it; both null when the path has no safe command. It is sent with no bearer
+ * header (even when a token is held) and a 404 means an older service. It never carries the token.
+ */
+export function tokenFile(options = {}) {
+  return send("GET", TOKEN_FILE, { signal: options.signal, open: true });
 }
 
 // --- the routes, in the order of ROUTES --------------------------------------------------------------------------

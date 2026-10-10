@@ -1589,3 +1589,10 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-add-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .wb-add-form { display: grid; gap: 8px; min-width: 0; }
 .wb-leave-project { padding: 0 8px; font-size: 12px; }
+
+/* ADJ-B3 (A-39): the token prompt's two steps: the command the service built with the system's name beside it and Copy, then the field */
+.wb-token-how { display: grid; gap: 8px; }
+.wb-token-how:empty { display: none; }
+.wb-token-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.wb-token-label, .wb-token-system { font-family: var(--wb-font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--pui-text-muted); }
+.wb-token-help { color: var(--pui-text-muted); font-size: 12px; }
