@@ -464,7 +464,7 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-main { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .wb-main > * { pointer-events: auto; }
 
-.wb-notice-box { position: absolute; top: var(--wb-kpi-top); left: calc(var(--wb-kpi-w) + var(--wb-edge) + 12px); right: calc(var(--wb-wait-w) + var(--wb-edge) * 2); z-index: 4; }   /* R-11: beside the KPI column */
+.wb-notice-box { position: absolute; top: var(--wb-kpi-top); left: calc(var(--wb-kpi-w) + var(--wb-edge) + 12px); right: calc(var(--wb-wait-w) + var(--wb-edge) * 2); max-width: 620px; z-index: 4; }   /* R-11: beside the KPI column; the round's page draws it 620 px wide */
 .wb-notice {
   display: flex;
   flex-wrap: wrap;
@@ -485,13 +485,14 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-notice-text { flex: 1 1 16rem; margin: 0; overflow-wrap: anywhere; }   /* no fixed height: the accept-config command is copied whole */
 
 .wb-empty { margin: 0; padding: 12px 16px; color: var(--pui-text-muted); font-size: 13px; }
-.wb-empty-card { position: absolute; top: 45%; left: 50%; translate: -50% -50%; max-width: 26rem; box-shadow: var(--wb-elev); }
+.wb-empty-card { position: absolute; top: 50%; left: 42%; translate: -50% -50%; max-width: 26rem; box-shadow: var(--wb-elev); }   /* centred on what the cards leave free, as the page draws it */
 
-/* the City's list of buildings: the HTML twin of the scene. On desktop it shows when it has the keyboard focus. */
+/* the City's list of buildings: the HTML twin of the scene, for the keyboard (R-22): clipped to a pixel until something in it has the focus, then a card where the
+   round's page draws it: 16 px right of the KPI column, at the top. Without WebGL it stands in full under the line that says so. */
 .wb-buildings {
   position: absolute;
-  bottom: calc(var(--wb-wait-bottom) + 6px);
-  left: var(--wb-edge);
+  top: var(--wb-kpi-top);
+  left: calc(var(--wb-kpi-w) + var(--wb-edge) + 16px);
   z-index: 5;
   width: 1px;
   height: 1px;
@@ -500,7 +501,21 @@ a.wb-crumb:hover { text-decoration: underline; }
   clip-path: inset(50%);
   box-shadow: var(--wb-elev);
 }
-.wb-buildings:focus-within, .wb-frame.no-scene .wb-buildings { width: 240px; height: auto; margin: 0; overflow: visible; clip-path: none; }
+.wb-buildings:focus-within { width: 260px; height: auto; max-height: calc(100% - var(--wb-kpi-top) - 200px); margin: 0; overflow-x: hidden; overflow-y: auto; clip-path: none; }   /* many projects scroll inside the card */
+.wb-frame.no-scene .wb-buildings { top: calc(var(--wb-kpi-top) + 52px); width: 260px; height: auto; max-height: calc(100% - var(--wb-kpi-top) - 252px); margin: 0; overflow-x: hidden; overflow-y: auto; clip-path: none; }
+/* a band over the scene (a failed read, a project not accepted) stands where the line and the list would: with no WebGL they go under it (the frame writes where it ends) */
+.wb-frame.no-scene.has-notice .wb-buildings { top: calc(var(--wb-notice-bottom, 0px) + 12px + 52px); }
+.wb-frame[data-screen="city"].no-scene.has-notice .wb-scene-fallback { top: calc(var(--wb-notice-bottom, 0px) + 12px); }
+/* no WebGL on the City: the line that says so is at the top, beside the KPI column (the page's frame), not in the middle of nothing */
+.wb-frame[data-screen="city"].no-scene .wb-scene-fallback {
+  top: var(--wb-kpi-top);
+  left: calc(var(--wb-kpi-w) + var(--wb-edge) + 16px);
+  translate: none;
+  max-width: none;
+  padding: 12px 16px;
+  font-size: 13px;
+  text-align: left;
+}
 .wb-buildings-head { font-size: 12px; }
 .wb-building-list { padding: 6px; display: grid; gap: 2px; list-style: none; }
 .wb-building-item { display: flex; align-items: center; gap: 4px; padding: 0; }
@@ -518,7 +533,7 @@ a.wb-crumb:hover { text-decoration: underline; }
   text-decoration: none;
 }
 .wb-building-link .wb-dot { grid-area: dot; }
-.wb-building-name { grid-area: name; overflow-wrap: anywhere; }
+.wb-building-name { grid-area: name; overflow-wrap: anywhere; font-weight: 600; }   /* the round's page draws the name at 600, not the browser's bold */
 .wb-building-link > .pui-badge, .wb-building-link > .pui-chip { grid-area: badge; }
 .wb-building-sub { grid-area: sub; color: var(--pui-text-muted); font-size: 12px; }
 .wb-building-link > .wb-icon { grid-area: chev; color: var(--pui-text-muted); }
@@ -718,24 +733,26 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-frame .wb-main > .wb-drawer.is-half { height: var(--wb-drawer-half); }
   .wb-frame .wb-main > .wb-drawer.is-full { flex: 1 1 0; height: auto; min-height: 0; }
   .wb-frame .wb-main > .wb-drawer.is-dragging { flex: none; height: var(--wb-drawer-drag, auto); }
-  .wb-drawer .wb-panel-head, .wb-buildings-head, .wb-wait-head { touch-action: none; user-select: none; }
+  .wb-drawer .wb-panel-head, .wb-wait-head { touch-action: none; user-select: none; }
   .wb-drawer .wb-panel-head { padding-top: 6px; }
   .wb-drawer.is-dragging .wb-panel-head { cursor: grabbing; }
   .wb-panel-wide, .wb-panel { width: auto; }
   /* collapsed: the header line only (a panel's head; the City's two lists keep their heads) */
   .wb-drawer.is-collapsed:not(.is-dragging) > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }
   .wb-drawer.is-collapsed:not(.is-dragging) .wb-floor-normal > :not(.wb-panel-head) { display: none; }
-  .wb-drawer.is-collapsed:not(.is-dragging) .wb-buildings > :not(.wb-buildings-head), .wb-drawer.is-collapsed:not(.is-dragging) .wb-wait-body > :not(.wb-wait-head) { display: none; }
-  /* the City: the Projects list and "Waiting for you" are one sheet, the pair scrolling together under the handle */
+  .wb-drawer.is-collapsed:not(.is-dragging) .wb-wait-body > :not(.wb-wait-head) { display: none; }
+  /* the City's sheet holds "Waiting for you" alone (R-22), collapsed on its one line: the handle, "Waiting for you" and its count, no tile and no rule under it */
   .wb-city-drawer { display: flex; flex-direction: column; }
   .wb-drawer-scroll { display: block; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  .wb-drawer-scroll > .wb-waiting, .wb-drawer-scroll > .wb-buildings {
+  .wb-drawer-scroll > .wb-waiting {
     position: static; width: auto; height: auto; max-width: none; margin: 0; overflow: visible; clip-path: none; border: 0; border-radius: 0; box-shadow: none;
   }
-  .wb-drawer-scroll > .wb-waiting { border-top: var(--pui-border-width) solid var(--pui-border); }
-  .wb-buildings:focus-within { width: auto; }
-  /* the project controls are the first part of the sheet, hidden while it is collapsed */
-  .wb-city-drawer > .wb-city-projects { position: static; width: auto; max-height: none; border-width: 0 0 var(--pui-border-width); border-radius: 0; box-shadow: none; overflow: visible; flex: none; }
+  .wb-drawer-scroll > .wb-waiting .wb-wait-head { padding: 10px 16px; border-bottom-width: 0; }
+  .wb-drawer-scroll > .wb-waiting .wb-wait-head .wb-kpi-tile { display: none; }
+  /* the Projects list is the scene's keyboard twin and no part of the sheet: while it has the focus it floats over the scene above the cards; with no WebGL it
+     stands in the flow of the main area, under them */
+  .wb-buildings:focus-within { top: 8px; right: 8px; left: 8px; z-index: 6; width: auto; }
+  .wb-frame.no-scene .wb-buildings { position: static; top: auto; left: auto; width: auto; margin: 8px 8px 0; }
   .wb-wait-head { padding: 11px 14px; }
   .wb-wait-list { max-height: none; }
   /* the bottom bar (R-10), visible whatever the sheet's position: row one the switcher, the inbox button and the colour-mode button; row two Back, the crumbs and the door */
@@ -1499,11 +1516,10 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, var(--wb-dock-h)) auto; grid-template-areas: "scene" "content" "track"; }
   .wb-scene-area { position: relative; inset: auto; grid-area: scene; overflow: hidden; }
   .wb-main { position: static; z-index: auto; grid-area: content; display: grid; align-content: start; gap: 12px; padding: 0 var(--wb-edge) var(--wb-edge); overflow-y: auto; pointer-events: auto; }
-  .wb-main > .wb-waiting, .wb-main > .wb-panel, .wb-main > .wb-buildings, .wb-main > .wb-empty-card, .wb-notice-box,
-  .wb-drawer-scroll > .wb-waiting, .wb-drawer-scroll > .wb-buildings {
+  .wb-main > .wb-waiting, .wb-main > .wb-panel, .wb-main > .wb-empty-card, .wb-notice-box,
+  .wb-drawer-scroll > .wb-waiting {
     position: static; width: auto; height: auto; max-width: none; translate: none; margin: 0; overflow: visible; clip-path: none;
   }
-  .wb-buildings:focus-within { width: auto; }
   .wb-panel-wide, .wb-panel, .wb-panel-lobby { width: auto; }
   .wb-wait-list { max-height: none; }
   .wb-dock { position: static; grid-area: track; padding: 0 var(--wb-edge) var(--wb-edge); }
@@ -1588,13 +1604,10 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-hand-button { font-size: 12px; }
 .wb-raw-reply .wb-pre { margin: 0 0 8px; }
 .wb-drop-line { margin: 0 0 6px; padding: 6px 8px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); color: var(--wb-ink-warn); font-size: 12px; overflow-wrap: anywhere; }
-.wb-city-projects { position: absolute; top: var(--wb-kpi-top); right: var(--wb-edge); z-index: 4; width: min(24rem, calc(100vw - 2 * var(--wb-edge))); max-height: calc(100% - var(--wb-kpi-top) - var(--wb-wait-bottom) - var(--wb-wait-h, 0px) - 2 * var(--wb-edge)); overflow-y: auto; box-shadow: var(--wb-elev); }
-.wb-city-projects-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; }
 .wb-add-project { display: grid; gap: 8px; padding: 8px; border-top: var(--pui-border-width) solid var(--pui-border); min-width: 0; }
 .wb-add-project[hidden] { display: none; }
 .wb-add-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .wb-add-form { display: grid; gap: 8px; min-width: 0; }
-.wb-leave-project { padding: 0 8px; font-size: 12px; }
 
 /* --- the token prompt (R-13 to R-15; ADJ-B3, A-39 for what it says): a technical sheet, not a card. A frame 1040 px wide with a line at each side on a ground of faint
    dots, small crosses at the corners of its body, a bar, the form, the owl at the right and the numbered steps along the foot. Tokens only: the dots are the text

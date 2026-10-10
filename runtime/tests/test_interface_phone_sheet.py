@@ -352,9 +352,9 @@ def test_the_handle_is_in_the_markup_builder_of_every_screen_that_has_a_panel_an
         assert f'createPanel({{ screen: "{screen}"' in text, f"{name}.js names its screen to the panel"
         dispose = text[text.index("dispose()"):]
         assert dispose.index("panel.drawer.destroy()") < dispose.index("panel.el.remove()"), f"{name}.js destroys the sheet's binding before it removes the panel"
-    # the City's sheet holds the two lists, and its headers start a drag
+    # the City's sheet holds "Waiting for you" alone (R-22: the Projects list is the scene's keyboard twin, no part of the sheet), and its header starts a drag
     city = (VIEWS / "city.js").read_text(encoding="utf-8")
-    assert 'handles: ".wb-buildings-head, .wb-wait-head"' in city and "frame.waitingCard.el" in city
+    assert 'handles: ".wb-wait-head"' in city and "frame.waitingCard.el" in city
 
 
 def test_the_sheet_uses_no_inline_style_and_the_position_is_a_class_of_the_stylesheet():
@@ -431,9 +431,9 @@ def test_the_phone_puts_the_cards_over_the_scene_from_the_top_and_the_two_kpi_ti
     assert bar["display"] == "grid" and "border-top" in bar and ".wb-bottom-row" in phone
     assert next(d for sel, d in rules(without_media(CSS)) if sel == ".wb-wait-btn")["display"] == "none", "the inbox button is the phone's: elsewhere the card is the list"
     assert re.search(r"\.wb-topbar, \.wb-dock \{ display: none; \}", phone), "a phone has no top row and no dock: their controls are in the bottom bar"
-    # the sheet's collapsed state keeps a header line (a panel's head, the City's two heads) and nothing else
+    # the sheet's collapsed state keeps a header line (a panel's head, the City's "Waiting for you" head: R-22 took the Projects head out of the sheet) and nothing else
     assert ".wb-drawer.is-collapsed:not(.is-dragging) > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }" in phone
-    assert ".wb-drawer.is-collapsed:not(.is-dragging) .wb-buildings > :not(.wb-buildings-head)" in phone and ".wb-wait-body > :not(.wb-wait-head)" in phone, \
+    assert ".wb-buildings > :not(.wb-buildings-head)" not in phone and ".wb-wait-body > :not(.wb-wait-head)" in phone, \
         "collapsed hides all but a header line, and not while a drag raises it: the content is there as the sheet comes up"
     # no panel on the phone is a free-flowing section of the page any more: the Floor and the Control room scroll inside the sheet
     assert ".wb-floor-normal { display: block; height: auto; }" not in "\n".join(media_blocks(CSS, "max-width: 639px"))

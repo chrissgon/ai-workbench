@@ -203,6 +203,22 @@ export function createFrame(root, handlers) {
     cameraWatch.observe(sceneArea);
   }
 
+  // Where the band ends, as the one number the stylesheet needs to keep what stands under it (the City's twin list without WebGL) clear of it: the band's bottom
+  // from the frame's top, 0 while there is no band. Written when the band changes and when it changes size (a long command wraps).
+  const placeNotice = () => {
+    let bottom = 0;
+    if (!noticeBox.hidden && typeof noticeBox.getBoundingClientRect === "function") {
+      const box = noticeBox.getBoundingClientRect();
+      if (box.height > 0) bottom = Math.round(box.bottom - frame.getBoundingClientRect().top);
+    }
+    frame.style.setProperty("--wb-notice-bottom", `${bottom}px`);
+  };
+  let noticeWatch = null;
+  if (typeof ResizeObserver === "function") {
+    noticeWatch = new ResizeObserver(placeNotice);
+    noticeWatch.observe(noticeBox);
+  }
+
   // The bottom sheet (frame/drawer.js) says where it stands. At full on a phone it covers the scene: the cards over the scene go and the scene is paused.
   let covering = false;
   main.addEventListener(DRAWER_EVENT, (event) => {
@@ -233,6 +249,7 @@ export function createFrame(root, handlers) {
       waitingCard.destroy();
       modeButton.destroy();
       if (cameraWatch) cameraWatch.disconnect();
+      if (noticeWatch) noticeWatch.disconnect();
       clearTimeout(announcing);
       queue.length = 0;
       frame.remove();
@@ -294,7 +311,7 @@ export function createFrame(root, handlers) {
     setProjects(list) {
       if (panelOf) panelOf.setProjects(list);
     },
-    /** A band under the header: spec {kind: "error"|"info", text, mono?, retry?} or null. */
+    /** A band under the header: spec {kind: "error"|"info", lead?, text?, mono?, retry?} or null. */
     notice(spec) {
       // Redrawn only when the notice changes: a poll that finds the same notice must not make a screen reader read an
       // alert again, nor take the focus from its "Try again" button.
@@ -303,21 +320,26 @@ export function createFrame(root, handlers) {
       shownNotice = key;
       noticeBox.replaceChildren();
       noticeBox.hidden = !spec;
-      if (!spec) return;
+      frame.classList.toggle("has-notice", Boolean(spec));
+      if (!spec) {
+        placeNotice();
+        return;
+      }
       const band = h("div", { class: `wb-notice${spec.kind === "error" ? " is-error pui-soft pui-error" : ""}`, role: spec.kind === "error" ? "alert" : "status" });
       // The service's own sentence; the command it gave (`command`, the `next` of the refusal) is drawn with the component.
       const sentence = (text, command, mono) => (command
         ? commandBlock({ command, sentence: text })
         : h("p", { class: mono ? "wb-notice-text mono" : "wb-notice-text", text }));
       if (spec.lead) band.append(h("p", { class: "wb-notice-lead", text: spec.lead }));
-      band.append(sentence(spec.text, spec.command, spec.mono));
+      if (spec.text || spec.command) band.append(sentence(spec.text, spec.command, spec.mono));     // a band may be its lead alone
       if (spec.retry) {
-        const button = h("button", { class: "pui-btn pui-surface pui-outline", type: "button", text: "Try again" });
+        const button = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", text: "Try again" });
         button.addEventListener("click", () => handlers.onRetry());
         band.append(button);
       }
       for (const extra of spec.more || []) band.append(sentence(extra.text, extra.command, true));
       noticeBox.append(band);
+      placeNotice();
     },
     /** Tell a screen reader: at most one sentence per two seconds. */
     announce(text) {
