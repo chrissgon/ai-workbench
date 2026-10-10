@@ -8,15 +8,18 @@ import { h } from "../dom.js";
 import { cull, rankOf } from "./cull.js";
 import { stackColumn } from "./plates.js";
 
-/** The card of a building: a dot (theme when a task runs), the name, the decisions badge and a sub line. */
+/**
+ * The label of a building (round 4): a pill, one line: a dot (the theme colour while a task runs), the name, what the project is doing, and the count of
+ * decisions waiting, or the chip "Not accepted". With three or more projects one with no decision and no running task is a muted dot until it is pointed
+ * at or followed (C-7: `quiet`).
+ */
 export function cityCard(spec) {
-  const node = h("div", { class: `wb-label wb-label-card${spec.selected ? " is-selected" : ""}` });
-  const row = h("div", { class: "wb-label-row" },
+  const node = h("div", { class: `wb-label wb-pill${spec.selected ? " is-selected" : ""}${spec.quiet ? " is-quiet" : ""}` },
     h("span", { class: `wb-dot${spec.running ? " is-running" : ""}` }),
-    h("strong", { class: "wb-label-name", text: spec.name }));
-  if (!spec.accepted) row.append(h("span", { class: "pui-chip pui-warn pui-soft wb-chip-small", text: "Not accepted" }));
-  else if (spec.decisions > 0) row.append(h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(spec.decisions) }));
-  node.append(row, h("div", { class: "wb-label-sub", text: spec.sub }));
+    h("span", { class: "wb-pill-name", text: spec.name }),
+    h("span", { class: "wb-pill-sub", text: spec.sub }));
+  if (!spec.accepted) node.append(h("span", { class: "pui-chip pui-warn pui-soft wb-chip-small", text: "Not accepted" }));
+  else if (spec.decisions > 0) node.append(h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(spec.decisions) }));
   return node;
 }
 

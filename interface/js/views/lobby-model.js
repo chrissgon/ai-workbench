@@ -258,7 +258,7 @@ export function roomModel({ working, decisions, hasMessages, accepted, request, 
     ? { title: request.title || `Request ${request.id}`, lines: [`request #${request.id} · ${request.state}`], dot: DOT[state] }
     : { title: accepted ? "No request is open" : NOT_ACCEPTED_TEXT, lines: [], dot: DOT[state] };
   return {
-    kind: "room", ready, door: true, state, window: windowState(state === "working"), decisions, drawers: docs ? drawersOf(docs.length) : null,
+    kind: "room", ready, door: true, state, window: windowState(state === "working" || state === "waiting"), decisions, drawers: docs ? drawersOf(docs.length) : null,
     sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : null, empty: !hasMessages,
     tips: {
       agent: `Planning agent · ${words}`, desk: request ? `Current task · ${request.title || `request #${request.id}`}` : "Current task · none yet",

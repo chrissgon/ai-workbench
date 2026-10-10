@@ -269,9 +269,10 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     a = "aaaaaaaaaaaa"
     # planning is floor 0, then the agents in the order given
     assert got["floorsOrder"] == ["planning", "engineering", "marketing", "brand", "design"]
-    # a floor's windows are lit when a task of its agent runs and grey in every other case (WP-9.8: no pale state); a decision's floor waits
-    assert got["shop"]["windows"] == [["planning", "grey", True], ["engineering", "lit", False], ["marketing", "grey", True],
-                                      ["brand", "grey", True], ["design", "grey", False]]
+    # a floor's windows are lit when its agent is active, a task runs or a decision waits, and grey in every other case (R-21, which supersedes WP-9.8's
+    # "lit only while a task runs"; no pale state); a decision's floor waits
+    assert got["shop"]["windows"] == [["planning", "lit", True], ["engineering", "lit", False], ["marketing", "lit", True],
+                                      ["brand", "lit", True], ["design", "grey", False]]
     assert got["shop"]["decisions"] == 3 and got["shop"]["running"] == 5 and got["shop"]["accepted"] is True
     assert got["docs"] == {"floors": [{"agent": None, "window": "grey", "waits": True}], "decisions": 1, "running": None}, \
         "a project with no agents is one floor, which waits when a decision does"
@@ -615,7 +616,8 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
                  "building.js", "world.js", "tower.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 23 and (SCENE / "tween.js").is_file()
+    # 23 modules before round 4; R-41 and R4D-2 add owl.js and svgpath.js, R-19 and R-20 city-motion.js, R-17 and R-20 marks.js
+    assert len(list(SCENE.glob("*.js"))) == 27 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():
@@ -627,9 +629,12 @@ def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():
         assert not re.search(r"Math\.random|setInterval", text), f"{path.name}: nothing random, no timer"
         # a hex colour is allowed only for a light's colour (palette.js names them once); everything else is read from tokens
         for literal in re.findall(r"0x[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", text):
-            assert path.name in ("palette.js", "engine.js"), f"{path.name} has a colour literal {literal}"
+            # owl.js: the mark's own palette, the brand's exception (R-41): its six literals are pinned below
+            assert path.name in ("palette.js", "engine.js", "owl.js"), f"{path.name} has a colour literal {literal}"
     palette = (SCENE / "palette.js").read_text(encoding="utf-8")
     assert sorted(re.findall(r"0x[0-9a-fA-F]{6}", palette)) == ["0x000000", "0xffffff"], "only the light's white and the shadow's black (DEVIATION-8)"
+    owl = (SCENE / "owl.js").read_text(encoding="utf-8")
+    assert sorted(re.findall(r"#[0-9a-fA-F]{6}\b", owl)) == sorted(["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FFFFFF", "#FCD34D"]), "the owl's fixed palette is the mark's six colours and nothing else"
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert re.findall(r"0x[0-9a-fA-F]{6}", engine) == ["0xffffff"], "the outline's colour is replaced by the theme token at once"
     for token in ("--wb-raised", "--wb-ground", "--pui-theme", "--pui-warn", "--pui-success", "--pui-error", "--pui-border", "--pui-text-muted"):

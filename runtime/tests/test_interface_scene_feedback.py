@@ -198,10 +198,11 @@ def test_a_window_is_warm_when_its_agent_works_and_grey_in_every_other_state_and
     assert got["state"] == ["lit", "grey"]
     assert got["colour"] == ["WARM", "BORDER", "BORDER", "BORDER", "BORDER"], "working -> the warm recipe; every other state, even an old word, the border tone"
     assert got["unlit"] == [True, False, False], "only a lit window is an unlit (self-lit) material"
-    assert got["city"] == [["planning", "grey"], ["engineering", "lit"], ["design", "grey"], ["marketing", "grey"]], "a waiting, stopped or idle floor is grey"
+    # R-21 (supersedes "lit only while a task runs"): lit means the agent is active, working or waiting for an answer; dark, resting or off
+    assert got["city"] == [["planning", "grey"], ["engineering", "lit"], ["design", "grey"], ["marketing", "lit"]], "a waiting floor is lit; a stopped or idle floor is grey"
     assert got["cityUnaccepted"] == ["grey"] * 4
-    assert got["building"] == [["planning", "idle", "grey"], ["engineering", "working", "lit"], ["design", "off", "grey"], ["marketing", "waiting", "grey"]]
-    assert got["lobby"] == ["lit", "grey", "grey", "grey"]
+    assert got["building"] == [["planning", "idle", "grey"], ["engineering", "working", "lit"], ["design", "off", "grey"], ["marketing", "waiting", "lit"]]
+    assert got["lobby"] == ["lit", "lit", "grey", "grey"], "the Lobby is lit while a turn runs or a decision waits (R-21)"
     palette = (SCENE / "palette.js").read_text(encoding="utf-8")
     assert re.search(r"palette\.windows = \{ lit: palette\.warm, grey: T\.border \};", palette), "the grey is the border token, the same recipe in light and in dark"
     for path in sorted(JS.rglob("*.js")):
@@ -228,6 +229,7 @@ out.cityNothing = visible(world).filter((x) => ["a", "b", "c"].includes(x[0]));
 applyOutlineVisibility(world.outlines, "b");
 out.cityRoute = visible(world).filter((x) => ["a", "b", "c"].includes(x[0]));
 out.citySelected = world.selected;
+out.brackets = world.brackets.map((b) => [b.id, b.group.visible]);
 // a floor of the open building: its line is drawn only when the route selects the floor (the Floor, the Lobby)
 world.setFocus("a", true);
 world.setFloors("business", null, true);
@@ -246,9 +248,10 @@ console.log(JSON.stringify(out));
 def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_selects_the_floor(tmp_path):
     got = run_node(tmp_path, OUTLINES)
     assert got["rule"] == [False, True, False, False, False], "a line shows only for the object the route selected: a hovered object has its box, no lot or floor line"
-    assert got["cityBuilt"] == [["a", False], ["b", False], ["c", False]], "built hidden: no standing lot line"
-    assert got["cityNothing"] == got["cityBuilt"] and got["citySelected"] is None, "the City selects nothing by itself"
-    assert got["cityRoute"] == [["a", False], ["b", True], ["c", False]], "the line stays for the object a route selects"
+    # R-17 supersedes the lot line: the City marks a building with eight corner brackets (world.brackets, hidden until the engine asks), no line
+    assert got["cityBuilt"] == [] and got["cityNothing"] == [] and got["citySelected"] is None, "the City has no lot line and selects nothing by itself"
+    assert got["cityRoute"] == [], "no lot line is made for a route to select"
+    assert got["brackets"] == [["a", False], ["b", False], ["c", False]], "built hidden: no standing brackets"
     assert got["floorsNothing"] is True, "no floor line stands, not even for the work order's floor"
     assert got["floorRoute"] == [["b", True], ["floor:business", True]] or ["floor:business", True] in got["floorRoute"], "the floor the route selects keeps its line"
     assert got["server"] == [[["room", True]], "room"], "the Control room the route selects keeps its floor line"
@@ -264,7 +267,8 @@ def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows
     assert "Box3().setFromObject(hit.object).expandByScalar" not in engine, "no padded bounding box"
     city = (SCENE / "city.js").read_text(encoding="utf-8")
     tower = (SCENE / "tower.js").read_text(encoding="utf-8")
-    assert "kit.themeLine, group);" in city and "edge.visible = false" in city, "the lot line is built hidden"
+    marks = (SCENE / "marks.js").read_text(encoding="utf-8")
+    assert "group.visible = false" in marks and "brackets" in engine, "R-17: the brackets of a building are built hidden and shown by the engine for the followed or pointed building"
     assert "lot.runningTask !== null && lot.accepted" in tower, "the beacon ring exists only for a running task"
     motion = (SCENE / "prototype-motion.js").read_text(encoding="utf-8")
     assert "beaconPulse(seconds)" in city and "Math.sin(t * BEACON_RATE)" in motion and "BEACON_RATE = 3" in motion and "BEACON_SWING = 0.12" in motion and "0.35 + 0.3" in motion, \
@@ -705,10 +709,11 @@ def test_the_citys_card_shows_its_theme_border_only_for_a_project_the_person_has
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     city_view = (JS / "views" / "city.js").read_text(encoding="utf-8")
     assert "worldModel(snapshot, now, { selectedId: null, marked: selectedId, focus: null" in city_view, "the tracking bar's default project is not marked on the scene; the chosen project keeps its outline"
-    assert 'classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId)' in engine, "hovered (the scene or the list) or chosen by the route"
+    # R-17: the pill is outlined in the moment the building wears its brackets, pointed at (the scene or the list) or followed (the project the person chose)
+    assert 'classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked))' in engine, "hovered, followed or chosen by the route"
     assert engine.count("markLabels();") >= 3, "marked on every hover change, build and relabel"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
-    assert ".wb-label-card.is-selected" in css and "wb-camera-bottom" not in css and "156px" not in css.split(".wb-camera-tools")[1].split("}")[0]
+    assert ".wb-pill.is-selected" in (INTERFACE / "scene.css").read_text(encoding="utf-8") and "wb-camera-bottom" not in css and "156px" not in css.split(".wb-camera-tools")[1].split("}")[0]
     assert 'tools.style.setProperty("--wb-y"' in engine and "insets.bottom" in engine, "the buttons sit above the bar by the height the frame measured"
     assert "translate: 0 calc(0px - var(--wb-y" in css
 

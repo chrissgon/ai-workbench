@@ -174,7 +174,7 @@ def test_a_refused_turn_shows_the_drawings_words_and_any_other_refusal_its_own_m
     assert got["notices"][3]["title"] == "The turn failed"
     assert got["room"] == ["working", "waiting", "idle", "off"]
     shape = got["roomShape"]
-    assert shape["door"] is True and shape["ready"] is True and shape["window"] == "grey" and shape["decisions"] == 2
+    assert shape["door"] is True and shape["ready"] is True and shape["window"] == "lit" and shape["decisions"] == 2   # R-21: the room is lit while a decision waits
     assert shape["board"] == {"title": "Spring campaign", "lines": ["request #14 · planned"], "dot": "warn"}
     assert shape["tips"]["tray"] == "Inbox · 2 waiting" and shape["tips"]["agent"] == "Planning agent · waiting for you"
     assert got["label"] == "Lobby of northwind-shop, planning agent waiting, 1 decision, door to the Control room"

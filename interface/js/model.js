@@ -144,8 +144,8 @@ export function buildingOf(project, detail) {
   }
   const waits = new Set(decided.map((d) => d.agent));
   const floors = (ordered.length ? ordered : [{ name: null, enabled: true, acting_mode: null }]).map((a) => {
-    // a window is warm when a task of the floor's agent runs and grey otherwise (waiting, idle, stopped, not accepted)
-    const window = windowState(accepted && Boolean(a.name) && running.has(a.name));     // grey in every state but a running one of an accepted project
+    // R-21: a window is lit when the floor's agent is active, running a task or waiting for an answer, and dark otherwise (idle, stopped, not accepted)
+    const window = windowState(accepted && Boolean(a.name) && (running.has(a.name) || waits.has(a.name)));
     return { agent: a.name, window, waits: shown && (a.name ? waits.has(a.name) : decided.length > 0) };
   });
   const open = !shown ? 0 : status ? decided.length : format.count(project.open_pending);
