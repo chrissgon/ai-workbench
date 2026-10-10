@@ -1322,6 +1322,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 @media (max-width: 639px) {
   .wb-floor-steps { bottom: 0; display: grid; translate: 0 calc(0px - var(--wb-y, 10px)); }   /* level with the camera buttons, above the cards and the sheet */
   .wb-floor-steps[hidden] { display: none; }
+  :root { --wb-card-w: 280px; }   /* building.html at 375 px: the floor card is 280 px, so the runs and the spend stay on one line */
   .wb-bpanel > .wb-panel-body { padding: 12px 12px 28px; }
   .wb-fl-row, .wb-rq-main { min-height: 44px; }
   .wb-card-actions .pui-btn { flex: 1 1 100%; min-height: 44px; }
