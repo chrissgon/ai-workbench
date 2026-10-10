@@ -158,6 +158,30 @@ export function pathToShapes(THREE, d, o = {}) {
   });
 }
 
+/**
+ * One THREE.Path for each subpath of `d`, left open as a stroke draws it (a feather chain, a brow line): the same options as `pathToShapes`.
+ * `path.getPoints(divisions)` is the polyline to stroke.
+ */
+export function pathToLines(THREE, d, o = {}) {
+  const { sx, sy } = scales(o);
+  const ox = o.originX || 0;
+  const oy = o.originY || 0;
+  const sign = o.flipY === false ? 1 : -1;
+  const px = (p) => (p[0] - ox) * sx;
+  const py = (p) => (p[1] - oy) * sy * sign;
+  return subpaths(parsePath(d)).map((sub) => {
+    const line = new THREE.Path();
+    for (const segment of sub.segments) {
+      const p = segment.points;
+      if (segment.type === "M") line.moveTo(px(p[0]), py(p[0]));
+      else if (segment.type === "L") line.lineTo(px(p[0]), py(p[0]));
+      else if (segment.type === "C") line.bezierCurveTo(px(p[0]), py(p[0]), px(p[1]), py(p[1]), px(p[2]), py(p[2]));
+      else if (segment.type === "Q") line.quadraticCurveTo(px(p[0]), py(p[0]), px(p[1]), py(p[1]));
+    }
+    return line;
+  });
+}
+
 /** The scale of each axis of an options object: `scaleX` and `scaleY`, each defaulting to `scale`, which defaults to 1. */
 function scales(o) {
   const base = o.scale === undefined ? 1 : o.scale;

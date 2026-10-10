@@ -24,6 +24,7 @@ import { buildWorld } from "./world.js";
 import { boundsOfBox, contentBounds, createCamera } from "./rig.js";
 import { createTween } from "./tween.js";
 import { frameSeconds } from "./prototype-motion.js";
+import { tooltipPlace } from "./room-words.js";
 
 export const BUILDERS = { world: buildWorld };   // the Control room registers its own kind here (views/control-scene.js)
 // The motions of the prototype (WP-9.10: its own functions, prototype-motion.js, stepped frame by frame): the camera approaches its
@@ -55,7 +56,9 @@ export function createEngine(host, options) {
   canvas.setAttribute("aria-describedby", "wb-camera-help");
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // the room's layers (the owl's drawing, a note, a binder) stand 0.0016 of a unit apart in depth, which asks for a 24-bit depth buffer over the camera's 1 to 500: the plain
+    // (linear) one the browser gives by default, asked for here by name; a 16-bit one would fight (README, "The rooms")
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, depth: true, logarithmicDepthBuffer: false });
   } catch (e) {
     throw new NoWebGL();
   }
@@ -291,20 +294,31 @@ export function createEngine(host, options) {
   // chosen by the route. The tracking bar's default project does not count.
   function markLabels() {
     for (const entry of labelEntries) {
-      if (entry.spec.kind === "card") entry.node.classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked));
+      if (entry.spec.kind !== "card") continue;
+      const open = Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked);
+      if (open === entry.node.classList.contains("is-selected")) continue;
+      entry.node.classList.toggle("is-selected", open);
+      // C-7: a quiet project's dot opens into its card for the pointer and for the focus of its row in the list alike; the card is another size than the dot, and the
+      // culling reads the size
+      entry.width = entry.node.offsetWidth;
+      entry.height = entry.node.offsetHeight;
+      if (size.w) positionLabels();
     }
   }
 
   function applyOutlines() {
     if (content) applyOutlineVisibility(content.outlines, content.selected);
+    canvas.classList.toggle("is-dim", Boolean(content && content.dim));   // a project that is not accepted: the whole drawing at 55 percent (`scene.css`)
     applyBrackets();
   }
 
   // R-17: a building of the City, followed (the project the person has chosen) or pointed at (on the scene or in the list), wears its eight corner
   // brackets in the brand colour, never an outline. They are drawn only while the building is closed: an opening building has its floors marked instead.
   function applyBrackets() {
-    if (!content || !content.brackets) return;
-    for (const b of content.brackets) b.group.visible = b.tower.brackets.closed && (b.id === hoverId || b.id === content.marked);
+    if (!content) return;
+    for (const b of content.brackets || []) b.group.visible = b.tower.brackets.closed && (b.id === hoverId || b.id === content.marked);
+    // R-28, R-31: an object of a room under the pointer or the focus (a floor of the Building, the owl, the board, the bookcase, the door) wears its corner brackets
+    for (const hit of content.hits) if (hit.marks) hit.marks.visible = hit.id === hoverId;
   }
 
   // The world changes in place: a model of the same lots (another poll, another route: the focus) never builds the scene again. A tower
@@ -394,7 +408,8 @@ export function createEngine(host, options) {
     lastInsets = insets;
     tools.style.setProperty("--wb-y", `${Math.max(16, insets.bottom || 0)}px`);   // above the tracking bar, whatever its height
     bounds = subjectBounds();
-    frustum = fitFrustum(bounds, size, fitInsets(insets, corner ? corner.offsetHeight : 0), insets.pad || 1.04);   // below the corner card, when there is one
+    const cap = content.zoomCap ? content.zoomCap(size) : null;   // the City is not closer than the page draws it
+    frustum = fitFrustum(bounds, size, fitInsets(insets, corner ? corner.offsetHeight : 0), insets.pad || 1.04, cap);   // below the corner card, when there is one
     view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
     return frustumOf(frustum, view);
   }
@@ -547,7 +562,6 @@ export function createEngine(host, options) {
       const seconds = (now - epoch) / 1000;
       content.beacons.forEach((b) => pulseBeacon(b, seconds));
       content.motions.forEach((m) => m.tick(seconds));
-      if (hoveredHit() && hoveredHit().moves) refreshOutline();   // a hovered figure or desk that is working moves: its outline moves with it
     }
     const started = clock();
     renderer.render(scene, camera);
@@ -583,7 +597,7 @@ export function createEngine(host, options) {
     const hit = id && content ? content.hits.find((x) => x.id === id) : null;
     applyOutlines();
     markLabels();
-    if (hit && !hit.brackets) {
+    if (hit && !hit.brackets && !hit.marks) {
       outline = new THREE.LineSegments(outlineGeometry(THREE, hit.outline || hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD), outlineMaterial);
       scene.add(outline);
     }
@@ -594,7 +608,7 @@ export function createEngine(host, options) {
   function drawMarked() {
     const hit = content && content.marked ? content.hits.find((x) => x.id === content.marked) : null;
     applyBrackets();
-    if (!hit || hit.brackets) {
+    if (!hit || hit.brackets || hit.marks) {
       if (markedOutline) {
         scene.remove(markedOutline);
         markedOutline.geometry.dispose();
@@ -646,8 +660,13 @@ export function createEngine(host, options) {
     if (result.hit) {
       tooltip.textContent = result.hit.tip;
       tooltip.hidden = false;
-      tooltip.style.setProperty("--wb-x", `${Math.min(size.w - 20, result.x + 14).toFixed(1)}px`);
-      tooltip.style.setProperty("--wb-y", `${(result.y + 16).toFixed(1)}px`);
+      // an object of a room has its tooltip over it (R-31); a building follows the pointer
+      const above = result.hit.anchor ? project(result.hit.anchor) : null;
+      tooltip.classList.toggle("is-above", Boolean(above));
+      // the tooltip stays inside the canvas: a word over an object at the edge is moved in by half its width, and one over an object at the top is let down under the top edge
+      const { x, y } = tooltipPlace({ above, at: result, size, wide: tooltip.offsetWidth || 0, tall: tooltip.offsetHeight || 0 });
+      tooltip.style.setProperty("--wb-x", `${x.toFixed(1)}px`);
+      tooltip.style.setProperty("--wb-y", `${y.toFixed(1)}px`);
     } else {
       tooltip.hidden = true;
     }
@@ -753,6 +772,7 @@ export function createEngine(host, options) {
   const stats = () => ({ ...loop.stats(), hover: hoverId, outline: outlineProbe(), towers: content && content.towers ? Object.fromEntries([...content.towers].map(([id, t]) => [id, +t.open.toFixed(3)])) : null, view: { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom }, builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
   canvas.wbStats = stats;
   canvas.wbSamples = () => (content ? visibleSamples(THREE, camera, scene, content.hits, size) : []);
+  canvas.wbMarks = () => (content ? content.hits.filter((hit) => hit.marks).map((hit) => [hit.id, hit.marks.visible]) : []);   // which object wears its brackets (R-28, R-31)
 
   return {
     canvas,

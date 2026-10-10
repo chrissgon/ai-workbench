@@ -40,3 +40,18 @@
   transform: translate(-50%, -50%);
 }
 .wb-pill.is-quiet:not(.is-selected) > * { display: none; }
+
+/* the tooltip of an object of the scene (R-31): dark, over the object that is picked (a building's follows the pointer) */
+.wb-tooltip.pui-tooltip {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--pui-radius);
+  background-color: var(--pui-text);
+  color: var(--pui-bg);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.wb-tooltip.pui-tooltip.is-above { transform: translate(-50%, calc(-100% - 10px)); }
+
+/* a project that is not accepted: every floor dark, no owl, no mark, and the whole drawing at 55 percent (the Building and the Floor; R-26) */
+.wb-canvas.is-dim { opacity: 0.55; }

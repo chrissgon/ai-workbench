@@ -77,8 +77,8 @@ function paint(THREE, geometry, tone) {
 export function treeGeometries(THREE, tones) {
   const light = new THREE.Vector3(-0.3, 0.8, 0.5).normalize();
   const indexed = new THREE.OctahedronGeometry(1, 0);
-  const crown = indexed.toNonIndexed();
-  indexed.dispose();
+  const crown = indexed.index ? indexed.toNonIndexed() : indexed;   // the library's solid comes indexed or not, by version
+  if (crown !== indexed) indexed.dispose();
   crown.scale(0.85, 0.84, 0.85);
   crown.translate(0, 1.75, 0);
   const position = crown.getAttribute("position");

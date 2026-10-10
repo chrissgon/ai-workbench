@@ -153,3 +153,103 @@ export function cityTones(palette) {
     shadow: ink.clone(),
   };
 }
+
+/**
+ * The rooms' drawing in the colours of `scene.css` (round 4: R-21, R-23, R-23b, R-49), each a token or a mix of two, in light and in dark, as that file
+ * writes them (the later rule of a class wins, as in the cascade). A face of a solid is {top, left (+z), right (+x)}. Pure, as `cityTones`: it reads
+ * `palette.T`, `palette.mix`, `palette.bg` and `palette.dark`, and a stand-in without `bgToken` takes the surface for it.
+ */
+export function roomTones(palette) {
+  const { T, mix, bg, dark } = palette;
+  const city = cityTones(palette);
+  const bgt = T.bgToken || bg;
+  const emph = T.emphasis;
+  const tm = T.textMuted;
+  const tx = T.text;
+  const th = T.theme;
+  const ink = city.shadow;
+  const pick = (light, deep) => (dark ? deep : light);
+  const solid = (top, left, right) => ({ top, left, right });
+  const all = (colour) => solid(colour, colour, colour);
+  const eh = (t) => mix(emph, tm, t);                         // a step between the emphasis ground and the muted text
+  const cover = (n) => [th, pick(mix(bg, th, 0.45), mix(tx, th, 0.45)), pick(mix(bg, T.warn, 0.55), mix(emph, T.warn, 0.6)), pick(mix(tm, emph, 0.3), eh(0.7))][n - 1];
+  const tb = pick(mix(bg, emph, 0.7), mix(bgt, emph, 0.7));
+  const note = { done: pick(mix(bg, T.success, 0.45), mix(emph, T.success, 0.62)), run: th, left: pick(bg, mix(emph, tx, 0.55)), fail: pick(mix(bg, T.error, 0.45), mix(emph, T.error, 0.62)) };
+  const noteEdge = pick(eh(0.6), bgt);
+  const shelfIn = pick(eh(0.42), eh(0.05));
+  return {
+    ink,
+    // the floor, by what the agent does: a lit room is a soft warm tone (R-21, R-23)
+    floor: pick(eh(0.3), mix(bgt, bg, 0.7)),
+    floorOff: pick(eh(0.55), bgt),
+    floorLit: pick(mix(bg, th, 0.3), mix(emph, th, 0.28)),
+    ledge: city.ledge,
+    wall: solid(pick(bg, eh(0.42)), pick(mix(bg, emph, 0.7), mix(bgt, emph, 0.78)), pick(mix(bg, emph, 0.28), mix(bgt, emph, 0.94))),
+    // a window seen from inside (an opening as deep as the wall, the glass set back with one upright and one rail, a trim, a board under it)
+    glass: city.glass, glassOff: city.glassOff, glassLit: city.glassLit,
+    mull: pick(bg, mix(bgt, emph, 0.6)),
+    jamb: city.jamb,
+    under: pick(bg, eh(0.3)),
+    trim: pick(eh(0.45), eh(0.4)),
+    board: solid(pick(bg, eh(0.48)), pick(eh(0.4), eh(0.22)), pick(eh(0.24), eh(0.32))),
+    // the task board: a frame, the panel, a shade, a note by state with its shadow, fold, three lines and pin, two markers and an eraser on the ledge
+    tbFrame: pick(eh(0.46), eh(0.44)),
+    tb,
+    tbShade: mix(tb, ink, 0.12),
+    note,
+    noteEdge,
+    noteShadow: mix(tb, ink, 0.18),
+    noteFold: { done: mix(note.done, ink, 0.22), run: mix(note.run, ink, 0.22), left: mix(note.left, ink, 0.22), fail: mix(note.fail, ink, 0.22) },
+    noteLine: { done: mix(note.done, ink, 0.38), run: mix(note.run, ink, 0.38), left: mix(note.left, ink, 0.38), fail: mix(note.fail, ink, 0.38) },
+    notePin: pick(mix(tm, tx, 0.4), tx),
+    marker: all(th),
+    markerB: all(pick(mix(tm, tx, 0.4), mix(emph, tx, 0.5))),
+    eraser: all(pick(eh(0.3), eh(0.7))),
+    // the bookcase: a plinth, a body, a top, a dark inside, boards with a lip, and a binder in one of four cover tones
+    cabBase: all(pick(mix(tm, tx, 0.25), eh(0.14))),
+    cab: solid(pick(bg, eh(0.6)), pick(eh(0.6), eh(0.3)), pick(eh(0.4), eh(0.42))),
+    cabTop: solid(pick(bg, eh(0.72)), pick(eh(0.7), eh(0.36)), pick(eh(0.5), eh(0.48))),
+    shelfIn,
+    shelfSide: pick(mix(tm, tx, 0.2), mix(bgt, emph, 0.3)),
+    shelfBoard: pick(bg, eh(0.6)),
+    shelfLip: pick(eh(0.3), eh(0.82)),
+    cover,
+    binder: (n) => {
+      const c = cover(n);
+      const light = pick(bg, tx);
+      return {
+        face: solid(c, c, mix(c, ink, 0.3)), outline: mix(c, ink, 0.22), round: mix(c, light, 0.28), edge: mix(c, ink, 0.25), band: mix(c, ink, 0.28), hole: mix(c, ink, 0.55),
+        pages: pick(bg, mix(tx, emph, 0.3)), label: pick(bg, mix(tx, emph, 0.25)), writing: pick(tm, emph),
+      };
+    },
+    // the desk in greys five steps apart: a light top, a darker drawer unit with lighter fronts, dark legs, the darkest keyboard
+    work: solid(pick(bg, eh(0.82)), pick(eh(0.48), eh(0.42)), pick(eh(0.26), eh(0.58))),
+    workLeg: all(pick(mix(tm, tx, 0.35), eh(0.34))),
+    ped: solid(pick(mix(tm, emph, 0.22), eh(0.14)), pick(mix(tm, emph, 0.22), eh(0.14)), pick(mix(tm, emph, 0.45), eh(0.26))),
+    pedDrawer: pick(eh(0.22), eh(0.5)),
+    handle: pick(bg, mix(emph, tx, 0.45)),
+    keyb: solid(pick(mix(tx, tm, 0.45), mix(bgt, emph, 0.4)), pick(mix(tx, tm, 0.15), bgt), pick(mix(tx, tm, 0.15), bgt)),
+    keyLine: pick(mix(tm, bg, 0.4), eh(0.6)),
+    mouse: solid(pick(mix(tx, tm, 0.55), eh(0.3)), pick(mix(tx, tm, 0.15), bgt), pick(mix(tx, tm, 0.15), bgt)),
+    paper: pick(bg, mix(tx, emph, 0.2)),
+    paperEdge: pick(eh(0.4), emph),
+    paperLine: pick(mix(tm, bg, 0.3), tm),
+    mug: solid(pick(mix(bg, th, 0.55), mix(emph, th, 0.7)), pick(mix(bg, th, 0.55), mix(emph, th, 0.7)), pick(mix(bg, th, 0.75), mix(emph, th, 0.5))),
+    mugIn: mix(th, ink, 0.45),
+    stand: solid(pick(mix(tm, emph, 0.2), eh(0.5)), pick(mix(tm, tx, 0.3), eh(0.24)), pick(mix(tm, tx, 0.3), eh(0.24))),
+    screen: all(pick(mix(tx, bg, 0.25), eh(0.22))),
+    screenBack: pick(mix(tx, tm, 0.45), eh(0.2)),
+    screenLogo: pick(mix(tm, bg, 0.2), eh(0.6)),
+    // the office chair: a star base, a column, a padded seat, a back with a pad, two armrests
+    chair: solid(pick(mix(tm, emph, 0.3), eh(0.66)), pick(mix(tm, tx, 0.3), eh(0.3)), pick(mix(tm, tx, 0.1), eh(0.46))),
+    chairBase: all(pick(mix(tm, tx, 0.45), eh(0.18))),
+    chairPad: pick(mix(tm, emph, 0.48), eh(0.78)),
+    // the Lobby's door: a casing a step lighter than the wall, the leaf in the brand's pale tone with two sunk panels, a light handle
+    doorFrame: pick(eh(0.4), eh(0.4)),
+    door: city.door,
+    doorShade: mix(th, ink, 0.38),
+    doorPanel: pick(mix(bg, th, 0.78), mix(bgt, th, 0.5)),
+    knob: pick(bg, tx),
+    bracket: city.bracket,
+  };
+}

@@ -23,7 +23,7 @@ export function worldModel(snapshot, now, { selectedId = null, marked = null, fo
     };
   }).filter((lot) => lot.floors.length > 0);
   const there = focus && lots.some((l) => l.id === focus) ? focus : null;
-  // The words of a room may carry its own state (the Lobby is working while a turn runs), its decisions, its sheets and drawers: they replace the
+  // The words of a room may carry its own state (the Lobby is working while a turn runs), its decisions, its documents' count (and the sheets and drawers older code reads): they replace the
   // snapshot's for that one floor.
   if (there && floor && room) {
     const lot = lots.find((l) => l.id === there);
@@ -33,6 +33,7 @@ export function worldModel(snapshot, now, { selectedId = null, marked = null, fo
       lot.floors[at] = {
         ...f, state: room.state || f.state, window: room.window || f.window, decisions: room.decisions !== undefined ? room.decisions : f.decisions,
         sheets: room.sheets || f.sheets, drawers: room.drawers !== undefined ? room.drawers : f.drawers,
+        documents: room.documents !== undefined ? room.documents : f.documents,
       };
     }
   }

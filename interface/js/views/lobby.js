@@ -246,7 +246,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     });
     const words = {
       tips: room.tips, board: room.board, door: true, doorTip: room.tips.door, state: room.state, window: room.window, decisions: room.decisions,
-      sheets: room.sheets, drawers: room.drawers,
+      sheets: room.sheets, drawers: room.drawers, documents: room.documents,
     };
     scene.update(worldModel(last.snapshot, last.now, { selectedId: project, focus: project, floor: "planning", room: words, ready: Boolean(status) }), canvasLabel(last.projectName, room));
   }
@@ -263,10 +263,11 @@ export function createLobbyView(frame, { project, onChanged }) {
     composer.set({ sending: turn !== null, notice, disabled: !accepted, running: runningNote() });
   }
 
-  /** A click in the room: the tray opens the Inbox, the desk the Desk tab, a sheet its document, the figure the Agent tab. */
+  /** A click in the room: the board opens the Tasks tab, the tray the Inbox, the bookcase the Desk tab, a sheet its document, the owl the Agent tab. */
   function openFromScene(id) {
     if (disposed) return;
-    if (id === "tray") window.location.hash = router.lobbyHash(project, "inbox");
+    if (id === "tasks") window.location.hash = router.lobbyHash(project, "tasks");
+    else if (id === "tray") window.location.hash = router.lobbyHash(project, "inbox");
     else if (id === "desk") window.location.hash = router.lobbyHash(project, "desk");
     else if (id === "agent") window.location.hash = router.lobbyHash(project, "agent");
     else if (String(id).startsWith("sheet:")) window.location.hash = router.lobbyDeskHash(project, String(id).slice(6));
