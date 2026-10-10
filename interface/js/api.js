@@ -292,6 +292,11 @@ export function artifactRaw(p, path, { signal } = {}) {
   return send("GET", `/projects/${enc(p)}/artifact/raw`, { query: { path }, signal, raw: true });
 }
 
+/** GET /projects/{p}/commands: {commands: [{command, arguments, help}]}, the lines `/help` prints, in its order. */
+export function commands(p, options) {
+  return send("GET", `/projects/${enc(p)}/commands`, options);
+}
+
 /** POST /projects/{p}/conversation (job): one turn with the planning agent, {text}. */
 export function say(p, text, options = {}) {
   return send("POST", `/projects/${enc(p)}/conversation`, { body: { text }, signal: options.signal });

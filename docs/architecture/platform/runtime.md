@@ -407,7 +407,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 <!-- generated: say-commands -->
 | Command | What it does (its `help` in the table) |
 |---|---|
-| `/help` | this text |
+| `/help` | list the commands |
 | `/status` | requests, tasks and what waits for you |
 | `/progress [since]` | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
 | `/pending [id]` | what waits for you; with an id, that decision whole |
@@ -470,6 +470,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `artifact` | `artifact` | terminal, page, mcp | no | the text of one file under docs/ of the project, read-only |
 | `artifact_raw` | `artifact-raw` | page | no | the bytes of one image under docs/ of the project (png, jpeg, webp or svg, by its magic number), read-only; the service answers them with their media type |
 | `version` | `version` | page, mcp | no | the change signal of the project's store: a number that grows on every write, and when the file was last written |
+| `commands` | `commands` | page | no | the commands of the conversation as rows, command, arguments and help line, in the order /help prints them (the page lists them when the person types /) |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 | `service_check` | `service-check` | terminal | no | what the local service checks at its start: the secret store, the credential, docker, the eval image and whether it dispatches (the service calls it for each project) |
 <!-- /generated -->
@@ -533,3 +534,4 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 - 2026-10-09: `go-ahead --task <id>` (ADJ-R1): the go-ahead on a task already created, from the terminal and the page; the `operations` and `cli-verbs` blocks are regenerated.
 - 2026-10-09: the review of ADJ-R1: a skill that reads its own output waits for no task of its own skill; the Required column is `flow_files.required_inputs`, the validator's reader; a go-ahead is about the waits shown (the dropped wait, not a marker for ever), and a key with no wait is refused; `go-ahead --task <id> --drop-after`; `task_retry`, `tasks_add` and the accepted sub-tasks take their waits in the same transaction; the board reads `after #n` only as an instruction and names the awaited tasks in the note; the brand flow's title is short.
 - 2026-10-10: the daily caps follow the billing of the credential, not the model's tier (ADJ-R3, A-38): `billing` on every credential of an adapter's manifest and `login_billing` (the validator requires them), `runtime/billing.py`, migration 9 (`task_runs.billing`), `autonomy.spend_split(runs, agent, per_run_usd)` and `may_start(..., billing)`, `billing` in the dispatcher's snapshot, the cost of a metered run kept on any tier, `billing` and `caps_in_use` in `agents`, and the page's meters named "Runs today" and "Spend today", drawn only for a cap in use.
+- 2026-10-10: the conversation's commands are data (R4-C1, R-45): the operation `commands` (a row of the table with the channel `page`, in `runtime/ops_reads.py`) and the route `GET /projects/{p}/commands` answer `{"commands": [{"command", "arguments", "help"}]}`, the rows `/help` prints in its order (`operations.chat_command_rows`, built from `chat_commands`, the one source of the help); `/help`'s own help line reads `list the commands`; the `say-commands`, `operations` and `service-routes` blocks are regenerated.

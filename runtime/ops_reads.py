@@ -83,6 +83,14 @@ def version(project: str) -> dict:
     return {"version": number, "changed_at": changed}
 
 
+def commands(project: str) -> dict:
+    """The commands of the conversation as rows: {"commands": [{"command", "arguments", "help"}]}, the lines `/help` prints
+    in the order it prints them (operations.chat_command_rows, built from the table `/help` is built from). The page lists
+    them when the person types `/`. The project is only the configuration check every operation makes."""
+    core.context(project)
+    return {"commands": operations.chat_command_rows()}
+
+
 def stop_runs(project: str | None = None) -> dict:
     """End every run this process started, through the lab's own stop (lab.stop_runs): the container and the process
     group of each run are ended and the folders of a run in progress go back to its run folder. The local service
