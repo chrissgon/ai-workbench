@@ -272,7 +272,7 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     # a floor's windows are lit when its agent is active, a task runs or a decision waits, and grey in every other case (R-21, which supersedes WP-9.8's
     # "lit only while a task runs"; no pale state); a decision's floor waits
     assert got["shop"]["windows"] == [["planning", "lit", True], ["engineering", "lit", False], ["marketing", "lit", True],
-                                      ["brand", "lit", True], ["design", "grey", False]]
+                                      ["brand", "grey", True], ["design", "grey", False]]   # brand is stopped: off, whatever it asked
     assert got["shop"]["decisions"] == 3 and got["shop"]["running"] == 5 and got["shop"]["accepted"] is True
     assert got["docs"] == {"floors": [{"agent": None, "window": "grey", "waits": True}], "decisions": 1, "running": None}, \
         "a project with no agents is one floor, which waits when a decision does"
@@ -635,6 +635,7 @@ def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():
     assert sorted(re.findall(r"0x[0-9a-fA-F]{6}", palette)) == ["0x000000", "0xffffff"], "only the light's white and the shadow's black (DEVIATION-8)"
     owl = (SCENE / "owl.js").read_text(encoding="utf-8")
     assert sorted(re.findall(r"#[0-9a-fA-F]{6}\b", owl)) == sorted(["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FFFFFF", "#FCD34D"]), "the owl's fixed palette is the mark's six colours and nothing else"
+    assert not re.search(r"0x[0-9a-fA-F]{3,}|rgba?\(|hsla?\(|oklch\(|color-mix", owl), "no other way of writing a colour in owl.js"
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert re.findall(r"0x[0-9a-fA-F]{6}", engine) == ["0xffffff"], "the outline's colour is replaced by the theme token at once"
     for token in ("--wb-raised", "--wb-ground", "--pui-theme", "--pui-warn", "--pui-success", "--pui-error", "--pui-border", "--pui-text-muted"):

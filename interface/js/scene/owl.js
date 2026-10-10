@@ -19,7 +19,9 @@ export const OWL_BOUNDS = Object.freeze({ x0: 20, x1: 180, y0: 22, y1: 186 });
 
 const P = OWL_PALETTE;
 
-// A part is {id, kind: "path" | "ellipse", d | e: [cx, cy, rx, ry], fill, stroke: {colour, width} | null}. The order is the mark's back to front.
+// A part is {id, kind: "path" | "ellipse", d | e: [cx, cy, rx, ry], fill, stroke: {colour, width} | null}. The order is the mark's back to front. These are the
+// parts the City's shadow and the next package start from: the brows, the rings round the eyes and the chains of feathers are not here, and R4-B2 adds them
+// with the poses.
 export const OWL_PARTS = Object.freeze([
   { id: "ear-left", kind: "path", d: "M44 70 Q30 40 36 22 Q60 34 74 50Z", fill: P.brown, stroke: { colour: P.ink, width: 7 } },
   { id: "ear-right", kind: "path", d: "M156 70 Q170 40 164 22 Q140 34 126 50Z", fill: P.brown, stroke: { colour: P.ink, width: 7 } },

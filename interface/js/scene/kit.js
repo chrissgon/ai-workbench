@@ -149,6 +149,18 @@ export function createKit(palette) {
       materials.push(material);
       return material;
     },
+    /** Free a geometry made through `track` or `mesh` now, and forget it (a tower that is made again frees its own; the kit lives as long as the scene). */
+    release(geometry) {
+      const at = geometries.indexOf(geometry);
+      if (at >= 0) geometries.splice(at, 1);
+      if (geometry !== unit && geometry !== unitEdges) geometry.dispose();
+    },
+    /** Free a material made through `adopt` now, and forget it. */
+    free(material) {
+      const at = materials.indexOf(material);
+      if (at >= 0) materials.splice(at, 1);
+      material.dispose();
+    },
     dispose() {
       for (const g of geometries) g.dispose();
       geometries.length = 0;

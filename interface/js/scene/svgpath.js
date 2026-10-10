@@ -45,6 +45,7 @@ export function parsePath(d) {
   let startX = 0;
   let startY = 0;
   let lastControl = null;   // {x, y, kind: "C"|"Q"} of the previous curve, for S and T
+  let closed = false;       // the last segment was a Z: a drawing command now starts a new subpath at the start point
   for (const { command, numbers } of tokenize(d)) {
     const upper = command.toUpperCase();
     const relative = command !== upper;
@@ -54,8 +55,11 @@ export function parsePath(d) {
       x = startX;
       y = startY;
       lastControl = null;
+      closed = true;
       continue;
     }
+    if (closed && upper !== "M") segments.push({ type: "M", points: [[startX, startY]] });
+    closed = false;
     if (numbers.length === 0 || numbers.length % arity !== 0) throw new Error(`svgpath: ${command} needs groups of ${arity} numbers, got ${numbers.length}`);
     for (let k = 0; k < numbers.length; k += arity) {
       const n = numbers.slice(k, k + arity);

@@ -145,7 +145,8 @@ export function buildingOf(project, detail) {
   const waits = new Set(decided.map((d) => d.agent));
   const floors = (ordered.length ? ordered : [{ name: null, enabled: true, acting_mode: null }]).map((a) => {
     // R-21: a window is lit when the floor's agent is active, running a task or waiting for an answer, and dark otherwise (idle, stopped, not accepted)
-    const window = windowState(accepted && Boolean(a.name) && (running.has(a.name) || waits.has(a.name)));
+    const active = a.enabled !== false && a.acting_mode !== "stopped";   // a stopped or disabled agent is off, whatever it asked (`floor-model.stateOf` says the same)
+    const window = windowState(accepted && Boolean(a.name) && (running.has(a.name) || (waits.has(a.name) && active)));
     return { agent: a.name, window, waits: shown && (a.name ? waits.has(a.name) : decided.length > 0) };
   });
   const open = !shown ? 0 : status ? decided.length : format.count(project.open_pending);

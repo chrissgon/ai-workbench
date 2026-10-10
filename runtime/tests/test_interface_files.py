@@ -770,7 +770,8 @@ def test_the_brand_pair_is_the_one_primary_token_and_is_set_once_at_root():
     engine = (INTERFACE / "js" / "scene" / "engine.js").read_text(encoding="utf-8")
     assert "outlineMaterial.color.copy(palette.T.theme)" in engine, "the selection outline takes the token's colour"
     for path in sorted((INTERFACE / "js").rglob("*.js")):
-        if path.name == "owl.js":   # R-41: the owl is the mark's own drawing in its fixed palette, the brand's exception (its six literals are pinned in test_interface_scene.py)
+        if path.name == "owl.js":   # R-41: the owl is the mark's own drawing in its fixed palette, the brand's exception: its brown is the pair's light half, and only that
+            assert not re.search(r"C99A6E", path.read_text(encoding="utf-8"), re.I), "owl.js holds the light brown of the pair only (the mark's brown), never the dark one"
             continue
         assert not re.search(r"6B4429|C99A6E", path.read_text(encoding="utf-8"), re.I), f"{rel(path)} holds a copy of the brand colour: it reads the token"
 

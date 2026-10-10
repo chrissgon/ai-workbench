@@ -130,6 +130,11 @@ export function createTower(kit, lot, cx, cz) {
   };
   const fadeMats = [];
   const roofMats = [];
+  const adopted = [];          // the materials this tower made, freed with it
+  const adopt = (material) => {
+    adopted.push(material);
+    return kit.adopt(material);
+  };
 
   // --- the colours a window can have ---------------------------------------------------------------------------------------------
   /** The glass of floor i: warm white while the floor is lit, else the project's glass, or the wall's own tone for a project that is not accepted. */
@@ -143,8 +148,8 @@ export function createTower(kit, lot, cx, cz) {
     for (let k = 0; k < attribute.count; k++) attribute.setXYZ(k, colour.r, colour.g, colour.b);
     attribute.needsUpdate = true;
   };
-  const waits = (f) => lot.accepted && f.state === "waiting" && f.decisions > 0;   // R-21: a mark stands only beside a lit floor that waits
   const lit = (f) => lot.accepted && f.window === "lit";
+  const waits = (f) => lit(f) && f.state === "waiting" && f.decisions > 0;   // R-21: a mark stands only beside a lit floor that waits
 
   // --- the walls of a floor, pierced by its openings -----------------------------------------------------------------------------
   const wallTones = { top: tones.shell.top, left: tones.shell.left, right: tones.shell.right };
@@ -209,7 +214,11 @@ export function createTower(kit, lot, cx, cz) {
       const outline = owlOutline(THREE, { scaleX: (0.56 * width) / 160, scaleY: (0.82 * height) / 164 });
       const parts = [new THREE.ShapeGeometry(outline.body, 14), ...outline.ears.map((ear) => new THREE.ShapeGeometry(ear, 6).translate(0, 0, -0.004))];
       const position = [];
-      for (const part of parts) position.push(...part.toNonIndexed().getAttribute("position").array);
+      for (const part of parts) {
+        const flat = part.toNonIndexed();
+        position.push(...flat.getAttribute("position").array);
+        flat.dispose();
+      }
       const geometry = kit.track(new THREE.BufferGeometry());
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
       geometry.computeBoundingSphere();
@@ -229,7 +238,7 @@ export function createTower(kit, lot, cx, cz) {
     const windows = list.map((o, k) => {
       const width = o.b - o.a;
       const height = o.top - o.bottom;
-      const material = kit.adopt(new THREE.MeshBasicMaterial({ color: tones.agent, transparent: true, opacity: 0, depthFunc: THREE.LessDepth, side: THREE.DoubleSide }));
+      const material = adopt(new THREE.MeshBasicMaterial({ color: tones.agent, transparent: true, opacity: 0, depthFunc: THREE.LessDepth, side: THREE.DoubleSide }));
       const mesh = new THREE.Mesh(figureGeometry(width, height), material);
       mesh.renderOrder = 2;   // after the glass it stands behind, whatever the sort says
       mesh.castShadow = false;
@@ -318,12 +327,12 @@ export function createTower(kit, lot, cx, cz) {
     body.box(0.95, 0.44 * TALL, 0.8, 1.9, ROOF_H - PIT, 0.7, tones.unit);
     body.mesh(roof);
     if (lot.runningTask !== null && lot.accepted) {
-      const material = kit.adopt(new THREE.MeshBasicMaterial({ color: tones.beacon, transparent: true, opacity: 1 }));
+      const material = adopt(new THREE.MeshBasicMaterial({ color: tones.beacon, transparent: true, opacity: 1 }));
       const ring = new THREE.Mesh(kit.track(new THREE.TorusGeometry(0.95, 0.07, 6, 28)), material);
       ring.rotation.x = Math.PI / 2;
       ring.position.set(-1.2, ROOF_H - PIT + 0.06, 1.0);
       roof.add(ring);
-      const core = new THREE.Mesh(kit.track(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 16)), kit.adopt(new THREE.MeshBasicMaterial({ color: tones.beacon })));
+      const core = new THREE.Mesh(kit.track(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 16)), adopt(new THREE.MeshBasicMaterial({ color: tones.beacon })));
       core.position.set(-1.2, ROOF_H - PIT + 0.03, 1.0);
       roof.add(core);
       tower.beacon = { ring, material, id: lot.id, fade: 1 };
@@ -334,7 +343,7 @@ export function createTower(kit, lot, cx, cz) {
   // inside the line, not drawn as lines of their own: the City's outline had a line at every floor boundary). The body is not drawn (its material is
   // invisible); it follows the height of the stack. A floor of the open building is outlined by its own room's slab and walls (building.js). The
   // City marks a building with corner brackets instead (R-17: `tower.brackets`), so the City draws no outline of it.
-  const silhouette = new THREE.Mesh(kit.unitBox, kit.adopt(new THREE.MeshBasicMaterial({ visible: false })));
+  const silhouette = new THREE.Mesh(kit.unitBox, adopt(new THREE.MeshBasicMaterial({ visible: false })));
   silhouette.userData.shell = true;
   silhouette.castShadow = false;
   group.add(silhouette);
@@ -347,7 +356,7 @@ export function createTower(kit, lot, cx, cz) {
     if (!own.has(list)) own.set(list, new Map());
     const clones = own.get(list);
     if (!clones.has(base)) {
-      const clone = kit.adopt(base.clone());   // the kit frees it with the rest
+      const clone = adopt(base.clone());   // freed with the tower
       clone.transparent = true;
       clones.set(base, clone);
       list.push(clone);
@@ -382,7 +391,7 @@ export function createTower(kit, lot, cx, cz) {
       const mark = new THREE.Group();
       group.add(mark);
       kit.box(0.5, 0.03, 0.34, 0, 0, 0, palette.bg, { parent: mark });
-      const outline = new THREE.LineSegments(kit.unitEdges, kit.adopt(new THREE.LineBasicMaterial({ color: T.text })));
+      const outline = new THREE.LineSegments(kit.unitEdges, adopt(new THREE.LineBasicMaterial({ color: T.text })));
       outline.scale.set(0.5, 0.03, 0.34);
       outline.position.y = 0.015;
       mark.add(outline);
@@ -505,13 +514,25 @@ export function createTower(kit, lot, cx, cz) {
     return changed;
   };
 
-  /** Free what this tower made that the kit does not share (its materials, the beacon's ring). */
+  /**
+   * Free what this tower made, so that a tower made again (a task starts or ends: `world.place`) leaves nothing behind: every geometry in its tree and
+   * in its brackets (the kit's shared unit box and edges are not its to free), the shadows' figures, and the materials it made. What the kit caches and
+   * shares (its lit and unlit colours, the vertex-colour material) stays with the kit.
+   */
   tower.dispose = () => {
-    for (const m of [...fadeMats, ...roofMats]) m.dispose();
-    if (tower.beacon) {
-      tower.beacon.material.dispose();
-      tower.beacon.ring.geometry.dispose();
+    const seen = new Set();
+    for (const top of [root, bracketing.group]) {
+      top.traverse((node) => {
+        if (node.geometry && !seen.has(node.geometry)) {
+          seen.add(node.geometry);
+          kit.release(node.geometry);
+        }
+      });
     }
+    for (const geometry of outlineCache.values()) if (!seen.has(geometry)) kit.release(geometry);
+    outlineCache.clear();
+    for (const material of adopted) kit.free(material);
+    adopted.length = 0;
   };
 
   // --- the opening: every position, every fade, from one number --------------------------------------------------------------------------

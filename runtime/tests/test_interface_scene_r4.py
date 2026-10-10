@@ -37,6 +37,10 @@ out.quad = flat("M0 0 Q5 10 10 0 T20 0");                      // and of T, for 
 out.chain = flat("M76 156 q6 6 12 0 q6 6 12 0");               // the owl's feathers: relative curves from the point the last one ended on
 out.numbers = flat("M-1.5-2.5L.5,.25e1");                      // signs, a leading point, a comma, an exponent
 out.closeBack = flat("M5 5 L10 5 L10 10 Z l1 1");              // a relative command after Z starts from the subpath's first point
+out.smoothRel = flat("M0 0 c0 10 10 10 10 0 s10 -10 10 0");    // relative S: the reflected first control, the others from the current point
+out.quadRel = flat("M0 0 q5 10 10 0 t10 0");                   // relative T
+out.afterZ = flat("M5 5 L10 5 L10 10 Z L20 20");               // a drawing command after Z, with no M, starts a new subpath at the start point
+out.afterZSubs = subpaths(parsePath("M5 5 L10 5 L10 10 Z L20 20 Z")).map((s) => [s.segments.length, s.closed]);
 out.subs = subpaths(parsePath("M0 0 L1 1 Z M5 5 L6 6")).map((s) => [s.segments.length, s.closed]);
 const fails = (d) => { try { parsePath(d); return null; } catch (e) { return e.message; } };
 out.arc = fails("M0 0 A5 5 0 0 1 10 10");
@@ -53,6 +57,10 @@ console.log(JSON.stringify(out));
     assert got["chain"] == [["M", 76, 156], ["Q", 82, 162, 88, 156], ["Q", 94, 162, 100, 156]]
     assert got["numbers"] == [["M", -1.5, -2.5], ["L", 0.5, 2.5]]
     assert got["closeBack"][-1] == ["L", 6, 6], "after Z the current point is the subpath's start (5, 5)"
+    assert got["smoothRel"][2] == ["C", 10, -10, 20, -10, 20, 0], "relative s reflects the last control about the current point (10, 0)"
+    assert got["quadRel"][2] == ["Q", 15, -10, 20, 0], "relative t reflects (5, 10) about (10, 0)"
+    assert got["afterZ"] == [["M", 5, 5], ["L", 10, 5], ["L", 10, 10], ["Z"], ["M", 5, 5], ["L", 20, 20]], "a draw after Z starts a new subpath where the closed one started"
+    assert got["afterZSubs"] == [[4, True], [3, True]], "and it is its own subpath, not a tail of the closed one"
     assert got["subs"] == [[3, True], [2, False]]
     assert "arc" in got["arc"] and got["unknown"] and got["short"] and got["stray"], "an arc, a command the grammar lacks, a short group and a stray number all throw"
 
@@ -87,12 +95,12 @@ console.log(JSON.stringify(out));
 
 # --- the owl ----------------------------------------------------------------------------------------------------------------------------
 
-def test_the_owl_module_holds_the_marks_six_colours_and_every_part_of_the_drawing_in_order():
+def test_the_owl_module_holds_the_marks_six_colours_and_the_parts_the_shadow_and_the_next_package_start_from():
     owl = (SCENE / "owl.js").read_text(encoding="utf-8")
     assert sorted(re.findall(r"#[0-9A-Fa-f]{6}\b", owl)) == sorted(["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FFFFFF", "#FCD34D"]), "the mark's palette and nothing else"
     ids = re.findall(r'\{ id: "([a-z-]+)", kind:', owl)
     assert ids == ["ear-left", "ear-right", "foot-left", "foot-right", "body", "wing-left", "wing-right", "face", "eye-left", "eye-right", "pupil-left", "pupil-right",
-                   "glint-left", "glint-right", "beak"], "the mark's parts, back to front"
+                   "glint-left", "glint-right", "beak"], "the parts of the mark the shadow and R4-B2 start from, back to front (the brows, the rings and the feathers are R4-B2's)"
     assert 'from "./svgpath.js"' in owl and "three.js" not in owl and "export function partShapes(THREE," in owl, "the owl takes the library as an argument, as the parser does"
 
 
@@ -166,7 +174,7 @@ def test_palette_reads_the_dark_scheme_for_the_mark_and_mixes_in_the_encoded_spa
 @needs_node
 def test_the_agents_shadow_and_the_notification_follow_the_stylesheets_keyframes(tmp_path):
     got = run_node(tmp_path, r"""
-import { AGENT_SECONDS, ALERT_SECONDS, ALERT_RISE, COME, LEAVE, LEAVE_UP, agentPose, agentRest, alertPose, cubicBezier, easeInOut, sample, windowOffset, windowSide } from "@JS@/scene/city-motion.js";
+import { AGENT_SECONDS, ALERT_SECONDS, ALERT_RISE, COME, COME_Y, LEAVE, LEAVE_UP, agentPose, agentRest, alertPose, cubicBezier, easeInOut, sample, windowOffset, windowSide } from "@JS@/scene/city-motion.js";
 const near = (a, b) => Math.abs(a - b) < 1e-6;
 const out = {};
 out.bezier = [easeInOut(0), easeInOut(1), +easeInOut(0.5).toFixed(6), easeInOut(0.25) < 0.25, easeInOut(0.75) > 0.75, cubicBezier(0, 0, 1, 1)(0.3).toFixed(3)];
@@ -176,7 +184,7 @@ out.sample = [sample([[0, 0], [1, 10]], 0), +sample([[0, 0], [1, 10]], 0.5).toFi
 const k = 1; const floor = 0;
 const t0 = AGENT_SECONDS - windowOffset(k, floor) + AGENT_SECONDS;      // phase 0
 const at = (percent) => agentPose(t0 + (percent / 100) * AGENT_SECONDS, k, floor);
-out.start = [at(0).opacity, at(0).scale, at(0).x === windowSide(k, floor) * COME];
+out.start = [at(0).opacity, at(0).scale, at(0).x === windowSide(k, floor) * COME, at(0).y === COME_Y, COME_Y];
 out.arrived = [at(7).opacity, at(7).scale, at(7).x, at(7).y];
 out.standing = [at(19.5).opacity, at(19.5).scale];
 out.leaving = [at(23).opacity > 0.3 && at(23).opacity < 0.4, at(25).opacity, at(25).scale, near(at(25).x, -windowSide(k, floor) * LEAVE), near(at(25).y, LEAVE_UP)];
@@ -200,7 +208,7 @@ console.log(JSON.stringify(out));
     assert got["bezier"][:2] == [0, 1] and got["bezier"][2] == 0.5 and got["bezier"][3] is True and got["bezier"][4] is True and got["bezier"][5] == "0.300", "ease-in-out is cubic-bezier(.42 0 .58 1)"
     assert got["mono"] is True
     assert got["sample"][:2] == [0, 5] and got["sample"][2][0] > 0 and got["sample"][2][1] > 0 and got["sample"][2][1] == 2 * got["sample"][2][0], "values are eased between two keyframes, element by element"
-    assert got["start"] == [0, 0.28, True], "it starts small, faint and to one side"
+    assert got["start"] == [0, 0.28, True, True, -0.022], "it starts small, faint, to one side and a hair low: x, y and scale arrive together (R-19; the page's --ax -13.2, --ay -7.2)"
     assert got["arrived"] == [0.62, 1, 0, 0], "7 percent: at its window, full size, opacity .62"
     assert got["standing"] == [0.62, 1], "it stands at the glass from 7 to 19.5 percent (about 6 s)"
     assert got["leaving"] == [True, 0, 0.3, True, True], "it fades from 23 percent, is gone at 25 and has walked off the other way, shrunk"
@@ -430,3 +438,60 @@ def test_the_engine_marks_a_building_with_brackets_never_an_outline_and_the_shad
     assert "SHADE_Y = 0.22" in engine and "ground.position.y = -0.06" in engine and "shade.position.y = SHADE_Y" in engine, "the shadows land over the paving, the void under the streets"
     world = (SCENE / "world.js").read_text(encoding="utf-8")
     assert "brackets: true" in world and "tower.brackets.group" in world
+
+
+# --- a tower made again frees what it made, a mark needs a lit floor, and an agent that is off lights nothing ---------------------------------------
+
+@needs_node
+def test_a_tower_made_again_frees_every_geometry_it_made_and_keeps_none_but_the_shared_ones(tmp_path):
+    got = run_node(tmp_path, WORLD_JS + r"""
+const made = new Set(); const gone = new Set();
+const setAttribute = THREE.BufferGeometry.prototype.setAttribute; const dispose = THREE.BufferGeometry.prototype.dispose;
+THREE.BufferGeometry.prototype.setAttribute = function (...a) { made.add(this); return setAttribute.apply(this, a); };
+THREE.BufferGeometry.prototype.dispose = function () { gone.add(this); return dispose.call(this); };
+const kit = createKit(palette);
+const world = buildWorld(kit, model({ lots: [lot("a", { floors: [
+  lot("x").floors[0], { ...lot("x").floors[1], state: "working", window: "lit" }, { ...lot("x").floors[2], state: "waiting", window: "lit", decisions: 2 }, lot("x").floors[3]] }), lot("b")] }));
+world.setFocus("a", true);   // its rooms are in: they are freed with it too
+const live = () => { const out = new Set(); world.group.traverse((n) => { if (n.geometry) out.add(n.geometry); }); return out; };
+const leaked = () => { const alive = live(); return [...made].filter((g) => !gone.has(g) && !alive.has(g) && g !== kit.unitBox && g !== kit.unitEdges).length; };
+const out = { start: leaked() };
+for (let i = 0; i < 8; i++) {   // the structure changes when a task starts or ends: the tower is made again
+  const next = JSON.parse(JSON.stringify(model({ lots: [lot("a", { runningTask: i % 2 ? 5 : null, floors: [lot("x").floors[0], { ...lot("x").floors[1], state: "working", window: "lit" }, { ...lot("x").floors[2], state: "waiting", window: "lit", decisions: 2 }, lot("x").floors[3]] }), lot("b")], focus: "a" })));
+  out["r" + i] = world.update(next).structure;
+}
+out.after = leaked();
+out.live = live().size;
+out.unitKept = [gone.has(kit.unitBox), gone.has(kit.unitEdges)];
+out.shapes = made.size;
+console.log(JSON.stringify(out));
+""")
+    assert all(got[f"r{i}"] is True for i in range(8)), "every update changed the running task, so the tower was made again each time"
+    assert got["start"] == 0 and got["after"] == 0, "no geometry of a tower that was made again stays undisposed: only the live ones and the kit's shared unit box and edges remain"
+    assert got["unitKept"] == [False, False], "the shared unit box and edges are never disposed"
+    assert got["shapes"] > 100, "the test did build many geometries"
+
+
+@needs_node
+def test_a_mark_needs_a_lit_floor_and_an_agent_that_is_off_lights_no_window_in_either_model(tmp_path):
+    got = run_node(tmp_path, STATES_JS + r"""
+import * as modelJs from "@JS@/model.js";
+import * as fm from "@JS@/floor-model.js";
+const mk = (extra) => buildWorld(kit, model({ lots: [lot("a", { floors: [lot("x").floors[0], { ...lot("x").floors[1], ...extra }] })] }));
+const out = {};
+out.dark = markIn(mk({ state: "waiting", window: "grey", decisions: 2 }).towers.get("a"), 1);          // waiting but not lit: no mark
+out.lit = markIn(mk({ state: "waiting", window: "lit", decisions: 2 }).towers.get("a"), 1);
+out.working = markIn(mk({ state: "working", window: "lit", decisions: 2 }).towers.get("a"), 1);        // working: lit, but a floor that works has no mark
+// an agent that is stopped or disabled with a decision: grey in both models (the City's and the Building's), as floor-model.stateOf says
+const project = { id: "aaaaaaaaaaaa", name: "shop", config: { accepted: true }, running_task: null, open_pending: 2 };
+const agents = [{ name: "planning", enabled: true, acting_mode: "supervised" }, { name: "design", enabled: false, acting_mode: "supervised" },
+  { name: "brand", enabled: true, acting_mode: "stopped" }, { name: "marketing", enabled: true, acting_mode: "supervised" }];
+const status = { requests: [], pending: [{ id: 1, task_id: 2, agent: "design", kind: "question", title: "q" }, { id: 2, task_id: 3, agent: "brand", kind: "question", title: "q" }, { id: 3, task_id: 4, agent: "marketing", kind: "question", title: "q" }] };
+out.city = modelJs.buildingOf(project, { status, agents }).floors.map((f) => [f.agent, f.window]);
+const view = fm.building({ projects: [project], details: { [project.id]: { status, agents: agents.map((a) => ({ ...a, mode: a.acting_mode, max_runs_per_day: 5, max_usd_per_day: 5, runs_today: 0, usd_today: 0, runs_without_cost: 0, queued: 0 })) } }, tasks: {}, loaded: true }, project.id);
+out.building = view.rows.map((r) => [r.name, r.state, r.window]);
+console.log(JSON.stringify(out));
+""")
+    assert got["dark"] == 0 and got["lit"] == 1 and got["working"] == 0, "R-21: a mark stands only beside a floor that is lit and waits"
+    assert got["city"] == [["planning", "grey"], ["design", "grey"], ["brand", "grey"], ["marketing", "lit"]], "the City's model: a disabled or stopped agent with a decision stays dark; one that is active and waits is lit"
+    assert got["building"] == [["planning", "idle", "grey"], ["design", "off", "grey"], ["brand", "off", "grey"], ["marketing", "waiting", "lit"]], "the Building's model says the same"

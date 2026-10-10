@@ -76,7 +76,9 @@ function paint(THREE, geometry, tone) {
 /** The crown of a tree (eight facets in four tones, lit from the upper left) and its trunk, as geometries painted from `tones`. */
 export function treeGeometries(THREE, tones) {
   const light = new THREE.Vector3(-0.3, 0.8, 0.5).normalize();
-  const crown = new THREE.OctahedronGeometry(1, 0).toNonIndexed();
+  const indexed = new THREE.OctahedronGeometry(1, 0);
+  const crown = indexed.toNonIndexed();
+  indexed.dispose();
   crown.scale(0.85, 0.84, 0.85);
   crown.translate(0, 1.75, 0);
   const position = crown.getAttribute("position");
@@ -90,7 +92,9 @@ export function treeGeometries(THREE, tones) {
   shade.sort((p, q) => q.value - p.value);
   const tone = new Map(shade.map((s, rank) => [s.facet, Math.min(tones.crown.length - 1, Math.floor((rank * tones.crown.length) / shade.length))]));
   const painted = paint(THREE, crown, (facet) => tones.crown[tone.get(facet)]);
-  const trunk = paint(THREE, new THREE.BoxGeometry(0.22, 0.95, 0.22).translate(0, 0.475, 0), () => tones.trunk);
+  const box = new THREE.BoxGeometry(0.22, 0.95, 0.22).translate(0, 0.475, 0);
+  const trunk = paint(THREE, box, () => tones.trunk);
+  box.dispose();
   return { crown: painted, trunk };
 }
 

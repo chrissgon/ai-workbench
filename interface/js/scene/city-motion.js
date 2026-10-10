@@ -44,6 +44,11 @@ export const AGENT_REST_OPACITY = 0.62;   // `.m-agent:nth-child(2)` under reduc
 export const COME = 0.85;
 export const LEAVE = 0.68;
 export const LEAVE_UP = 0.3;
+/**
+ * The page's start is `translate(--ax, --ay)` with `--ax` -13.2 px and `--ay` -7.2 px: along the face's horizontal axis the same step would be -7.62 px
+ * (13.2 times tan 30), so the start sits 0.42 px lower than a level slide; at 18.75 px to the unit that is this much (x and y arrive together).
+ */
+export const COME_Y = -0.022;
 
 /**
  * The shadow of window `k` of floor `floor` at `seconds` of the clock: {opacity, x, y, scale} in the window's plane (x along the wall, y up from
@@ -53,7 +58,7 @@ export const LEAVE_UP = 0.3;
 export function agentPose(seconds, k, floor) {
   const side = windowSide(k, floor);
   const phase = (((seconds + windowOffset(k, floor)) % AGENT_SECONDS) + AGENT_SECONDS) % AGENT_SECONDS / AGENT_SECONDS;
-  const transform = sample([[0, [side * COME, 0, 0.28]], [0.07, [0, 0, 1]], [0.195, [0, 0, 1]], [0.25, [-side * LEAVE, LEAVE_UP, 0.3]], [1, [-side * LEAVE, LEAVE_UP, 0.3]]], phase);
+  const transform = sample([[0, [side * COME, COME_Y, 0.28]], [0.07, [0, 0, 1]], [0.195, [0, 0, 1]], [0.25, [-side * LEAVE, LEAVE_UP, 0.3]], [1, [-side * LEAVE, LEAVE_UP, 0.3]]], phase);
   return { opacity: sample(AGENT_OPACITY, phase), x: transform[0], y: transform[1], scale: transform[2], phase };
 }
 
