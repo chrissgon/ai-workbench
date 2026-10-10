@@ -253,3 +253,58 @@ export function roomTones(palette) {
     bracket: city.bracket,
   };
 }
+
+/**
+ * The server room's drawing in the colours of `scene.css` (round 4: R-51), each a token or a mix of two, in light and in dark, as that file writes them (the later rule of a class
+ * wins, as in the cascade). The room's desk, chair, keyboards and screens on their stands are `roomTones`'s; these are what the racks, the wall screen and the screens' faces add.
+ * A face of a solid is {top, left (+z), right (+x)}. A stroke drawn at a share of opacity over a face (a vent, a grid line) is the blend, one flat tone. Pure, as `roomTones`: it reads
+ * `palette.T`, `palette.mix`, `palette.bg` and `palette.dark`, and a stand-in without `bgToken` takes the surface for it.
+ */
+export function serverTones(palette) {
+  const { T, mix, bg, dark } = palette;
+  const bgt = T.bgToken || bg;
+  const emph = T.emphasis;
+  const tm = T.textMuted;
+  const tx = T.text;
+  const th = T.theme;
+  const pick = (light, deep) => (dark ? deep : light);
+  const solid = (top, left, right) => ({ top, left, right });
+  const eh = (t) => mix(emph, tm, t);                         // a step between the emphasis ground and the muted text
+  const rack = solid(pick(mix(tm, emph, 0.35), eh(0.5)), pick(mix(tm, tx, 0.35), eh(0.22)), pick(mix(tm, tx, 0.12), eh(0.36)));
+  const ink = pick(mix(tx, tm, 0.3), bgt);                    // a vent's stroke
+  const wsScreen = pick(mix(tx, tm, 0.25), bgt);
+  const line = pick(bg, tx);                                  // the grid's, the head's and the base line's stroke
+  const mount = pick(mix(tm, tx, 0.35), eh(0.22));
+  return {
+    // the rack: a plinth, a body in three tones, a framed front with a grille over it, vents on the top and the side, and a cable tray over the racks
+    rack,
+    rackBase: pick(mix(tx, tm, 0.4), bgt),
+    rackDoor: pick(mix(tx, tm, 0.55), mix(bgt, emph, 0.55)),
+    grille: pick(mix(tm, tx, 0.1), eh(0.4)),
+    ventTop: mix(rack.top, ink, 0.55),
+    ventSide: mix(rack.left, ink, 0.55),
+    tray: solid(pick(mix(emph, tm, 0.5), eh(0.46)), pick(mix(tm, emph, 0.2), eh(0.26)), pick(mix(tm, emph, 0.2), eh(0.26))),
+    // a unit: a dark slot with two ears, three drive bays, an activity dot (dim) and the fact's light: found, missing, or dim when the unit carries none
+    unit: pick(mix(tx, tm, 0.18), bgt),
+    ear: pick(mix(tm, emph, 0.3), eh(0.55)),
+    bay: pick(mix(tx, tm, 0.6), eh(0.16)),
+    ledDim: pick(mix(tm, emph, 0.4), eh(0.6)),
+    ledOk: T.success.clone(),
+    ledBad: T.error.clone(),
+    ledOff: pick(mix(tm, tx, 0.3), eh(0.3)),
+    // the wall screen: two mounts, a body with depth, a bezel, the screen, its grid (16 percent), head and base lines and ticks (45 percent), the bars and their caps, its light
+    mount,
+    body: solid(pick(mix(tm, emph, 0.25), eh(0.56)), mount, mount),
+    bezel: pick(mix(tx, tm, 0.5), eh(0.34)),
+    wsScreen,
+    wsGrid: mix(wsScreen, line, 0.16),
+    wsLine: mix(wsScreen, line, 0.45),
+    bar: th.clone(),
+    barCap: pick(mix(th, bg, 0.45), mix(th, tx, 0.4)),
+    wsLed: T.success.clone(),
+    // a console screen that is off: its dark face, and the glint on it (10 percent of the surface or the text); the desk's back panel
+    screenFace: pick(mix(tx, tm, 0.12), bgt),
+    glint: mix(pick(mix(tx, tm, 0.12), bgt), pick(bg, tx), 0.1),
+    workBack: pick(mix(emph, tm, 0.62), eh(0.28)),
+  };
+}

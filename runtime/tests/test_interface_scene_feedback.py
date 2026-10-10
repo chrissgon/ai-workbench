@@ -256,7 +256,8 @@ def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_s
     assert got["floorsNothing"] is True, "no floor line stands, not even for the work order's floor"
     # R-28 and R-31: a floor is marked by corner brackets (hit.marks, shown by the engine), and the room as a whole is not picked on the Floor: no floor line at all
     assert got["floorRoute"] == [] and got["floorLines"] == [], "a floor has no outline line, whatever the route selects: its corners are marked by brackets"
-    assert got["server"] == [[["room", True]], "room"], "the Control room the route selects keeps its floor line"
+    # R-51 supersedes the room's outline in the theme colour: the Control room selects nothing by a line, its open tab's object wears corner brackets
+    assert got["server"] == [[], None], "the Control room has no floor line: the object of the open tab is marked by brackets (R-51)"
 
 
 def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows_a_shape_where_the_object_is_not_a_box():
