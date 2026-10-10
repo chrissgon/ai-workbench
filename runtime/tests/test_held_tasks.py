@@ -16,6 +16,7 @@ autonomy = st.load("autonomy")
 dispatcher = st.load("dispatcher")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_reads = st.load("ops_reads")
 ops_core = st.load("ops_core")
 operations = st.load("operations")
 
@@ -281,7 +282,9 @@ def test_a_held_credential_carries_each_command_as_a_field_with_the_username_quo
                                  {"name": "EXAMPLE_KEY_B", "command": store + "'name with space'"},
                                  {"name": "EXAMPLE_KEY_C", "command": None}]       # no username registered: no command to build
     assert entry["commands"][0]["command"] == operations.keyring_line("example-a")
-    assert store + "example-a" in entry["next"] and "EXAMPLE_KEY_C: " + store + "<username>" in entry["next"]  # the sentence stays
+    # A-34: the commands that are fields are not written a second time; the sentence keeps the one a field cannot give
+    assert store + "example-a" not in entry["next"] and "name with space" not in entry["next"] and "EXAMPLE_KEY_A" not in entry["next"]
+    assert "EXAMPLE_KEY_C: " + store + "<username>" in entry["next"] and "contracts/secrets.md" in entry["next"]
     [wide] = [a for a in ops.agents(path)["agents"]]
     assert wide["held"] == 1                                                            # agents carry the count, not the commands
 
@@ -306,3 +309,32 @@ def test_the_keyring_command_is_spelled_in_one_place_with_the_username_quoted():
     assert operations.keyring_line("example-a") == "uv run --with keyring==25.7.0 keyring set openhora example-a"
     assert operations.keyring_line("two words; rm -rf") == "uv run --with keyring==25.7.0 keyring set openhora 'two words; rm -rf'"
     assert operations.keyring_line("<username>") == "uv run --with keyring==25.7.0 keyring set openhora <username>"
+
+
+def test_a_held_credential_whose_commands_are_all_fields_is_one_sentence_that_writes_no_command(tree, monkeypatch):
+    """A-34: the page draws `commands` and `next` side by side, so the sentence must not write the command again."""
+    path = str(tree["project"])
+    planned(tree, "chain")
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: ["EXAMPLE_KEY_A", "EXAMPLE_KEY_B"])
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {"EXAMPLE_KEY_A": "example-a", "EXAMPLE_KEY_B": "example-b"})
+    monkeypatch.setattr(dispatcher, "store_readable", lambda: "ok")
+    ops.dispatch(path)
+    [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
+    assert entry["next"] == "The credential is in neither the environment nor the secret store."
+    assert [c["name"] for c in entry["commands"]] == ["EXAMPLE_KEY_A", "EXAMPLE_KEY_B"] and all(c["command"] for c in entry["commands"])
+    assert "keyring" not in entry["next"] and "<username>" not in entry["next"]
+
+
+def test_the_held_sentence_of_a_credential_with_no_command_to_build_keeps_the_table_and_the_other_reasons_are_unchanged(tree, monkeypatch):
+    path = str(tree["project"])
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {})
+    text = ops_reads.held_next(path, "credential", ["EXAMPLE_KEY_C"])
+    assert text.startswith("The credential is in neither the environment nor the secret store. Store it once")
+    assert "EXAMPLE_KEY_C: " in text and "contracts/secrets.md" in text and "<username>" in text, "the unregistered one is told where to look"
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {"EXAMPLE_KEY_A": "example-a"})
+    assert ops_reads.held_next(path, "credential", ["EXAMPLE_KEY_A"]) == "The credential is in neither the environment nor the secret store."
+    assert "EXAMPLE_KEY_A" not in ops_reads.held_next(path, "credential", ["EXAMPLE_KEY_A", "EXAMPLE_KEY_C"]), \
+        "a variable that has a command is left to its field, the other is still told"
+    assert "EXAMPLE_KEY_C" in ops_reads.held_next(path, "credential", ["EXAMPLE_KEY_A", "EXAMPLE_KEY_C"])
+    assert ops_reads.held_next(path, "stopped") is None
+    assert ops_reads.held_next(path, "secret store").startswith("uv run --with keyring==25.7.0 python3 ")

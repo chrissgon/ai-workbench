@@ -903,6 +903,53 @@ def test_add_a_project_shows_the_restart_line_with_copy_and_the_init_line_when_t
     assert any("could not read the start line" in note for note in got["blind"]["notes"])
 
 
+# --- A-34: the folder of a project comes from the service, so the restart line holds no placeholder ----------------------------------
+
+PROJECT_FOLDERS = r"""
+import * as m from "@JS@/views/city-projects-model.js";
+
+const A = "a".repeat(12), B = "b".repeat(12), C = "c".repeat(12);
+const START = "uv run --with keyring==25.7.0 python3 /opt/ck/runtime/service.py --project /work/shop";
+const head = m.startHead(START);
+const out = {};
+// the entry of GET /projects carries `folder`, accepted or not; the status is not needed to know it
+const snapshot = { projects: [{ id: A, name: "shop", folder: "/work/shop", config: { accepted: true } },
+                              { id: B, name: "blog", folder: "/work/my blog", config: { accepted: false }, message: "not accepted" }], details: {} };
+const projects = m.projectsOf(snapshot);
+out.projects = projects;
+out.add = m.restartLine({ head, projects, add: "/work/new" });
+out.leave = m.restartLine({ head, projects, leave: A });
+out.refusal = m.folderRefusal("/work/my blog", projects);
+// the service's folder wins over the configuration path of a status, and a status alone still works (an older service)
+const both = m.projectsOf({ projects: [{ id: C, name: "docs", folder: "/work/docs", config: { accepted: true } }],
+  details: { [C]: { status: { config: { path: "/elsewhere/docs/workbench/runtime.json" } } } } });
+out.both = both;
+const oldOnly = m.projectsOf({ projects: [{ id: C, name: "docs", config: { accepted: true } }],
+  details: { [C]: { status: { config: { path: "/work/docs/docs/workbench/runtime.json" } } } } });
+out.oldOnly = oldOnly;
+out.nothing = m.projectsOf({ projects: [{ id: C, name: "docs", folder: 7, config: { accepted: false } }], details: {} });
+// a folder is a text: a folder with shell text is quoted, never run
+out.quoted = m.restartLine({ head, projects: m.projectsOf({ projects: [{ id: C, name: "x", folder: "/w/$(touch pwn) x", config: { accepted: false } }], details: {} }) });
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_add_a_project_model_reads_each_projects_folder_from_the_list_and_writes_no_placeholder(tmp_path):
+    got = run_node(tmp_path, PROJECT_FOLDERS)
+    head = "uv run --with keyring==25.7.0 python3 /opt/ck/runtime/service.py"
+    assert got["projects"] == [{"id": "a" * 12, "name": "shop", "folder": "/work/shop"}, {"id": "b" * 12, "name": "blog", "folder": "/work/my blog"}], \
+        "a project that is not accepted has its folder too"
+    assert got["add"] == {"command": f"{head} --project /work/shop --project '/work/my blog' --project /work/new", "unknown": [], "empty": False}
+    assert "<folder of" not in got["add"]["command"] and "<folder of" not in got["leave"]["command"]
+    assert got["leave"] == {"command": f"{head} --project '/work/my blog'", "unknown": [], "empty": False}
+    assert got["refusal"] == "That folder is already one of the service's projects.", "the folder of a project that is not accepted counts as held"
+    assert got["both"][0]["folder"] == "/work/docs", "the service's own answer first"
+    assert got["oldOnly"][0]["folder"] == "/work/docs", "without the key, the status path still gives it"
+    assert got["nothing"][0]["folder"] is None, "a folder that is not a text is not one"
+    assert got["quoted"]["command"] == f"{head} --project '/w/$(touch pwn) x'" and got["quoted"]["unknown"] == [], "quoted, never run"
+
+
 # --- the files: nothing deleted that the rows keep, the cards wrap, the page builds no markup --------------------------------------
 
 def _css() -> str:

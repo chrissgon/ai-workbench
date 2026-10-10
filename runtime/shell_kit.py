@@ -181,13 +181,14 @@ class Jobs:
                 thread.join(0.5)
 
     def projects_list(self) -> dict:
-        """{"projects": [...]}: each project with its configuration's hash and whether it was accepted, and, when it
-        was, the number of pending decisions and the task that runs. A project whose configuration is not accepted (or
-        cannot be read) is listed with accepted false, the operation's refusal as `message` and no counts: never
-        refused."""
+        """{"projects": [...]}: each project with its `folder` (the absolute path the shell was given, which is the word
+        a `--project` takes: the page writes the restart line with it), its configuration's hash and whether it was
+        accepted, and, when it was, the number of pending decisions and the task that runs. A project whose
+        configuration is not accepted (or cannot be read) is listed with accepted false, the operation's refusal as
+        `message` and no counts: never refused."""
         out = []
         for project in self.projects:
-            entry = {"id": project["id"], "name": project["name"], "config": {"accepted": False}}
+            entry = {"id": project["id"], "name": project["name"], "folder": project["path"], "config": {"accepted": False}}
             try:
                 found = self.ops.config(project["path"])
             except self.ops.OpsError as e:

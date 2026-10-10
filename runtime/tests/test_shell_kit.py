@@ -249,9 +249,10 @@ def test_the_project_list_shows_each_projects_hash_and_counts_and_a_refused_proj
     jobs = kit.Jobs(Listed(), [{"id": "1", "name": "ok", "path": "/ok"}, {"id": "2", "name": "bad", "path": "/bad"},
                                {"id": "3", "name": "half", "path": "/half"}])
     listed = jobs.projects_list()["projects"]
-    assert listed[0] == {"id": "1", "name": "ok", "config": {"sha256": "a" * 64, "accepted": True}, "open_pending": 2,
-                         "running_task": 7}
-    assert listed[1] == {"id": "2", "name": "bad", "config": {"accepted": False}, "message": "not accepted"}
+    assert listed[0] == {"id": "1", "name": "ok", "folder": "/ok", "config": {"sha256": "a" * 64, "accepted": True},
+                         "open_pending": 2, "running_task": 7}
+    assert listed[1] == {"id": "2", "name": "bad", "folder": "/bad", "config": {"accepted": False}, "message": "not accepted"}
+    assert [e["folder"] for e in listed] == ["/ok", "/bad", "/half"], "A-34: every entry carries the folder, accepted or not"
     assert listed[2]["message"] == "no state" and "open_pending" not in listed[2] and listed[2]["config"]["accepted"]
 
 
