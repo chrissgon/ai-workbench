@@ -1,5 +1,6 @@
-// The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City, then the Building, the Floor, the
-// Lobby and the Control room; a screen with no view falls back to the placeholder). The page is kept current by a watcher (watch.js): while the
+// The page: the token prompt, then the shared frame with the screen the hash names (#/city is the City, then the Building, the Floor, the
+// Lobby and the Control room; a screen with no view falls back to the placeholder; #/ is the entry: the City, or the Building of the one
+// project of a service that holds one, by a rule that runs once, on the first read of the projects). The page is kept current by a watcher (watch.js): while the
 // document is visible it reads the service's change signal every second and, when a number moved (or after 30 quiet seconds, or after any
 // write the page sent), reloads everything it shows; it reads nothing while the document is hidden and reloads once when it becomes visible.
 
@@ -7,6 +8,7 @@ import * as api from "./api.js";
 import { emptySnapshot, refresh, versionKey } from "./data.js";
 import { h } from "./dom.js";
 import { createFrame } from "./frame/frame.js";
+import { initMode } from "./mode.js";
 import * as model from "./model.js";
 import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
@@ -34,6 +36,7 @@ let drawnKey = null;
 let knownDecisions = null; // ids of the decisions seen, to announce a new one
 let pendingMessage = null;
 let lastFollowed = null;   // the project the last poll read tasks for
+let entered = false;       // the entry rule (C-1) ran: once per page load, on the first read of the projects
 
 function currentRoute() {
   return router.parse(window.location.hash);
@@ -60,6 +63,7 @@ async function poll() {
     failure = null;
     reloads += 1;
     chooseDefault();
+    enter();
     render();
   } catch (e) {
     if (mine !== generation || !frame) return;
@@ -85,6 +89,18 @@ function chooseDefault() {
   if (selected && projects.some((p) => p.id === selected)) return;
   const withRequest = projects.find((p) => snapshot.details[p.id] && snapshot.details[p.id].status && model.openRequest(snapshot.details[p.id].status));
   selected = (withRequest || projects[0] || { id: null }).id;
+}
+
+/**
+ * C-1, on entry only: a page opened on `#/` (or on nothing) whose service holds exactly one project shows that project's Building, by replacing
+ * the hash (no history entry, so Back does not return to the empty entry). A reload on `#/city`, a deep link and a service with several projects
+ * are left as they are. The router has no project list, so the rule lives here, on the first read of the projects.
+ */
+function enter() {
+  if (entered) return;
+  entered = true;
+  const to = router.entryHash(window.location.hash, snapshot.projects.map((p) => p.id));
+  if (to) window.location.replace(to);
 }
 
 function askForToken(message) {
@@ -235,6 +251,7 @@ function render() {
   frame.setScreen(route, {
     projectName: routeProject ? routeProject.name : (project ? project.name : null), projectId: project ? project.id : null,
     leaf: route.agent ? route.agent.charAt(0).toUpperCase() + route.agent.slice(1) : null,
+    home: router.isHomeBuilding(route, projects.map((p) => p.id)),
   });
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);
@@ -300,4 +317,5 @@ document.addEventListener("visibilitychange", () => {
   if (watcher) watcher.visibilityChanged();    // visible again: one reload
 });
 
+initMode();      // the light/dark preference is applied before the first draw
 start();

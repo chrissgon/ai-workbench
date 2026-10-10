@@ -1,5 +1,8 @@
-// What a file handed to a task needs before it is sent: the refusal the page can know (over 25 MiB, a name the service would refuse) and the
-// base64 of its bytes. The Agent tab's "Hand a file over" and the review card's use them; the service checks both again.
+// What a file handed to a task needs before it is sent: the refusal the page can know (over 25 MiB, a name the service would refuse), the
+// base64 of its bytes, and the second step of a hand-over (C-17): the name of the file chosen and the button that sends it. Choosing a file
+// sends nothing. The Agent tab's "Hand a file over" and the review card's use them; the service checks both again.
+
+import { h } from "../dom.js";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const NAME = /^[A-Za-z0-9._-]{1,100}$/;
@@ -9,6 +12,18 @@ export function toBase64(bytes) {
   let text = "";
   for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(text);
+}
+
+/**
+ * The second step of a hand-over: the chosen file's name and the button "Hand over to task #n" that sends it, or null while no file is chosen.
+ * `onSend` is called by the button; `disabled` is true while a send runs or the control is locked.
+ */
+export function handOverStep(file, taskId, onSend, { disabled = false } = {}) {
+  if (!file) return null;
+  const label = `Hand over to task #${taskId}`;
+  const button = h("button", { class: "pui-btn pui-surface pui-outline wb-hand-button", type: "button", "aria-label": label, disabled, text: label });
+  button.addEventListener("click", onSend);
+  return h("div", { class: "wb-hand-step" }, h("span", { class: "wb-hand-chosen", text: file.name }), button);
 }
 
 /** The refusal before sending, or "" when the file may be sent: over 25 MiB, or a name the service would refuse. */

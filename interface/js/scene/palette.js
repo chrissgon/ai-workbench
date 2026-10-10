@@ -16,6 +16,22 @@ export const TOKEN_NAMES = Object.freeze({
 export const LIGHT_WHITE = 0xffffff;
 export const SHADOW_BLACK = 0x000000;
 
+/**
+ * Ask for a new palette when the colours change: the system's scheme (the media query) or the person's choice of light or dark (the
+ * library's `data-pui-mode` attribute on the root element, set by `mode.js`). Returns a function that stops listening. The query, the root
+ * and the observer class are arguments so a test runs it with stand-ins; where `MutationObserver` is missing the query alone is watched.
+ */
+export function watchScheme(onChange, { query = window.matchMedia("(prefers-color-scheme: dark)"), root = document.documentElement,
+  Observer = typeof MutationObserver === "function" ? MutationObserver : null } = {}) {
+  query.addEventListener("change", onChange);
+  const observer = Observer ? new Observer(() => onChange()) : null;
+  if (observer) observer.observe(root, { attributes: true, attributeFilter: ["data-pui-mode"] });
+  return () => {
+    query.removeEventListener("change", onChange);
+    if (observer) observer.disconnect();
+  };
+}
+
 /** Read one token's resolved colour through a probe element placed in `host`. */
 function read(probe, name) {
   probe.style.setProperty("color", `var(${name})`);

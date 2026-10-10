@@ -43,6 +43,12 @@ export function age(stamp, now) {
   return `${Math.floor(seconds / 86400)} d`;
 }
 
+/** An age (from `age`) as a phrase: "just now" for "now", else "12 min ago"; an unknown age is "". The one place that words an age with "ago". */
+export function agoPhrase(short) {
+  if (!short) return "";
+  return short === "now" ? "just now" : `${short} ago`;
+}
+
 /** The age spelled for a screen reader: "2 days", "5 hours", "12 minutes". */
 export function ageWords(stamp, now) {
   const short = age(stamp, now);

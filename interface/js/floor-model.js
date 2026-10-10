@@ -485,9 +485,11 @@ export function boardOf(view) {
     lines.push(`run #${run.id} ${word(RUN_STATUS, run.status)} · ${failed ? (run.failure ? word(FAILURE, run.failure) : "Failed") : (run.ending ? word(ENDING, run.ending) : "-")}`);
     const duration = formatDuration(run.duration_ms);
     lines.push([`attempt ${format.count(run.attempts)}`, duration, typeof run.tokens === "number" ? `${run.tokens.toLocaleString("en-US")} tokens` : "",
-      typeof run.cost_usd === "number" ? `$${run.cost_usd.toFixed(4)}` : "recorded: not available", run.model || ""].filter(Boolean).join(" · "));
+      typeof run.cost_usd === "number" ? `$${run.cost_usd.toFixed(4)}` : "unknown", run.model || ""].filter(Boolean).join(" · "));
   }
-  return { title: current.title || current.key || `Task ${current.id}`, lines, dot: row.state === "off" ? "border" : row.dot };
+  // the board names the task with its number and says it is the current one (C-18)
+  const name = current.title || current.key || "";
+  return { title: `#${current.id}${name ? ` ${name}` : ""} · current task`, lines, dot: row.state === "off" ? "border" : row.dot };
 }
 
 /** The words of the Floor's room (the world's `room`: tips and board). `documents` are the agent's rows of `artifacts`, newest first. */
@@ -523,7 +525,7 @@ export function deskRows(documents, filter = "") {
   return [...documents]
     .sort((a, b) => (a.modified_at < b.modified_at ? 1 : a.modified_at > b.modified_at ? -1 : a.path < b.path ? -1 : 1))
     .filter((d) => !text || String(d.path).toLowerCase().includes(text) || String(d.owner || "").toLowerCase().includes(text))
-    .map((d) => ({ path: d.path, owner: d.owner || "", size: formatSize(d.size), kind: deskKind(d.kind), modified: formatWhen(d.modified_at), bound: Boolean(d.bound) }));
+    .map((d) => ({ path: d.path, owner: d.owner || "", agent: d.agent || "", size: formatSize(d.size), kind: deskKind(d.kind), modified: formatWhen(d.modified_at), bound: Boolean(d.bound) }));
 }
 
 /** A path as the segments a break may follow ("/", "-" and "."), so a name is never broken inside a word. */

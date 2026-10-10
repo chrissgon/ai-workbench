@@ -31,7 +31,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
     `#${item.id} · `,
     item.task_id !== null && item.task_id !== undefined ? h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project), text: `request #${item.task_id}` }) : null,
     item.task_id !== null && item.task_id !== undefined ? " · " : null,
-    `${format.agentWord(item.agent)}${age ? ` · ${age === "now" ? "just now" : `${age} ago`}` : ""}`);
+    `${format.agentWord(item.agent)}${age ? ` · ${format.agoPhrase(age)}` : ""}`);
   if (item.created_at) meta.setAttribute("title", item.created_at);
   const title = h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: item.title || `Plan ${item.id}` });
 
@@ -57,7 +57,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
   const waits = createWaitsBlock(item.payload);
   const limits = limitsLine(item);
   const hashBlock = shown
-    ? h("div", { class: "wb-plan-hash-block" }, h("span", { class: "wb-card-label", text: "Plan hash" }), h("code", { class: "wb-plan-hash", text: shown }))
+    ? h("div", { class: "wb-plan-hash-block" }, h("span", { class: "wb-card-label", text: "Plan hash" }), h("code", { class: "wb-plan-hash", tabindex: "0", role: "group", "aria-label": "Plan hash", text: shown }))
     : h("p", { class: "wb-card-note", text: "This plan carries no hash, so it cannot be approved from here." });
   const text = planText(item);
   const asText = text

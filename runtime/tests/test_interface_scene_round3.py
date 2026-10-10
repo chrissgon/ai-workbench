@@ -634,7 +634,7 @@ console.log(JSON.stringify(out));
     assert got["lobbyDocument"] == {"step": "document", "hash": f"#/p/{p}/lobby/desk"} and got["lobbyPending"] == {"step": "document", "hash": f"#/p/{p}/lobby/inbox"}, "the Lobby too (it did nothing)"
     assert got["menu"] == {"step": "menu"} and got["selection"] == {"step": "selection"}, "a menu closes, then a selection is cleared"
     assert got["floorUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["lobbyUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["lobbyUpWithTab"] == {"step": "up", "hash": f"#/p/{p}"}, "the Floor and the Lobby go up to the Building"
-    assert got["buildingUp"] == {"step": "up", "hash": "#/"}, "the Building goes up to the City"
+    assert got["buildingUp"] == {"step": "up", "hash": "#/city"}, "the Building goes up to the City (C-1: #/city)"
     assert got["controlUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["controlFrom"] == {"step": "up", "hash": f"#/p/{p}/floor/marketing"}, "the Control room goes back to where it was opened from, else the Building"
     # In the Control room the frame holds no world (the room is its own scene): nothing there is a selection, so Escape goes straight up (the maintainer's
     # complaint was that it did not): `controlUp` and `controlFrom` above are that case.
@@ -959,7 +959,7 @@ console.log(JSON.stringify(out));
     assert got["controlBuilding"] == [True, f"#/p/{a}"], "or to the Building"
     assert got["controlDirect"] == [True, f"#/p/{a}"], "and with nothing before it, to the Building of its project"
     assert got["lobby"] == [True, f"#/p/{a}"], "the Lobby goes up to the Building"
-    assert got["pointer"] == [True, False, True, "#/"], "a pointer hover over the scene is not a selection: the first Escape goes up"
+    assert got["pointer"] == [True, False, True, "#/city"], "a pointer hover over the scene is not a selection: the first Escape goes up"
     assert got["keyboardFirst"] == [True, True, f"#/p/{a}", False], "the outline the keyboard's focus put on a row is cleared first, and the page stays"
-    assert got["keyboardSecond"] == [True, "#/"], "the next Escape goes up"
-    assert got["replaced"] == [False, True, "#/"], "a keyboard selection the pointer's outline replaced is no selection: the first Escape goes up"
+    assert got["keyboardSecond"] == [True, "#/city"], "the next Escape goes up"
+    assert got["replaced"] == [False, True, "#/city"], "a keyboard selection the pointer's outline replaced is no selection: the first Escape goes up"

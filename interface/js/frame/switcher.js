@@ -1,13 +1,19 @@
 // F-2 the project switcher: a cycle button and a listbox of the projects. On the City it chooses the project the tracking bar
-// follows; on another screen it opens the same screen in the chosen project (the page decides: `onSelect`).
+// follows; on another screen it opens the same screen in the chosen project (the page decides: `onSelect`). With one project there is
+// nothing to cycle to: the main button is a label (C-1). With none the card still opens, with its foot alone (C-20). The foot holds the
+// provisional light/dark control (D-2), where it stays until the design round decides its place, and "Forget the token".
 
 import { h } from "../dom.js";
+import { currentMode, MODES, setMode } from "../mode.js";
 import { arrowNav } from "./arrows.js";
 import { icon } from "./icons.js";
 
 let counter = 0;
+const MODE_WORDS = Object.freeze({ light: "Light", dark: "Dark", system: "System" });
+const defaultMode = { current: () => currentMode(), set: (mode) => setMode(mode) };
 
-export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
+/** mode: {current(): "light" | "dark" | "system", set(mode)} - the preference the foot's control shows and sets (js/mode.js by default). */
+export function createSwitcher({ onSelect, onForgetToken, onOpen, mode = defaultMode }) {
   counter += 1;
   const listId = `wb-projects-${counter}`;
   const name = h("strong", { class: "wb-switch-name", text: "No project" });
@@ -18,11 +24,19 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
     class: "pui-btn pui-surface pui-outline wb-switch-chevron", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false",
     "aria-controls": listId, "aria-label": "Choose a project",
   }, icon("chevron-down", 16));
+  // with one project (or none) the main button is a label: no cycling, no place "1/1", no title
+  const labelName = h("strong", { class: "wb-switch-name", text: "No project" });
+  const label = h("span", { class: "pui-btn pui-surface pui-outline wb-switch-main is-label" }, icon("building-2", 16), labelName);
   const group = h("div", { class: "pui-group-row wb-switch-group" }, main, chevron);
+  let single = false;
   const heading = h("div", { class: "pui-card-header wb-listbox-head", text: "" });
   const list = h("ul", { class: "pui-list pui-hoverable wb-listbox", id: listId, role: "listbox", tabindex: "-1", "aria-label": "Projects" });
+  const empty = h("p", { class: "wb-empty wb-listbox-empty", hidden: true, text: "No project" });
   const forget = h("button", { class: "pui-btn pui-link wb-forget", type: "button", text: "Forget the token" });
-  const card = h("div", { class: "pui-card wb-listbox-card", hidden: true }, heading, list, h("div", { class: "wb-listbox-foot" }, forget));
+  // the provisional colour-mode control: three radio chips in a group (buttons, so the library's blocked radio mark is not needed)
+  const chips = MODES.map((word) => h("button", { class: "pui-btn pui-surface pui-outline wb-mode-chip", type: "button", role: "radio", "aria-checked": "false", tabindex: "-1", "data-mode": word, text: MODE_WORDS[word] }));
+  const modeGroup = h("div", { class: "wb-mode", role: "radiogroup", "aria-label": "Colour mode" }, h("span", { class: "wb-mode-label", "aria-hidden": "true", text: "Colour mode" }), h("div", { class: "pui-group-row wb-mode-chips" }, chips));
+  const card = h("div", { class: "pui-card wb-listbox-card", hidden: true }, heading, list, empty, h("div", { class: "wb-listbox-foot" }, modeGroup, forget));
   const el = h("div", { class: "wb-switcher" }, group, card);
 
   let projects = [];
@@ -40,15 +54,27 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
     else list.removeAttribute("aria-activedescendant");
   }
 
+  /** The control shows the preference as it is now (it can be changed elsewhere), with the checked chip alone in the tab order. */
+  function drawMode() {
+    const now = mode.current();
+    for (const chip of chips) {
+      const on = chip.getAttribute("data-mode") === now;
+      chip.setAttribute("aria-checked", String(on));
+      chip.setAttribute("tabindex", on ? "0" : "-1");
+      chip.classList.toggle("is-selected", on);
+    }
+  }
+
   function setOpen(next, { focus = true } = {}) {
-    open = next && projects.length > 0;
+    open = Boolean(next);
     card.hidden = !open;
     chevron.setAttribute("aria-expanded", String(open));
     chevron.classList.toggle("is-open", open);
     if (open) {
       onOpen();
       setActive(indexOfSelected());
-      list.focus();
+      drawMode();
+      (projects.length > 0 ? list : forget).focus();      // with no project the foot is all there is
     } else if (focus && next === false && document.activeElement && el.contains(document.activeElement)) {
       chevron.focus();
     }
@@ -62,7 +88,7 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
   }
 
   main.addEventListener("click", () => {
-    if (projects.length === 0) return;
+    if (projects.length < 2) return;
     const next = projects[(indexOfSelected() + 1) % projects.length];
     setOpen(false, { focus: false });
     onSelect(next.id);
@@ -88,6 +114,22 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
     }
   });
   arrowNav(card, ".wb-forget");
+  chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      mode.set(chip.getAttribute("data-mode"));
+      drawMode();
+    });
+  });
+  modeGroup.addEventListener("keydown", (event) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();      // the card's arrow keys move among its own buttons; these move among the three choices
+    const at = chips.findIndex((chip) => chip.getAttribute("aria-checked") === "true");
+    const next = chips[(Math.max(0, at) + step + chips.length) % chips.length];
+    next.click();
+    next.focus();
+  });
   forget.addEventListener("click", () => onForgetToken());
   const onPointerDown = (event) => {
     if (open && !el.contains(event.target)) setOpen(false, { focus: false });
@@ -109,10 +151,15 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
       const index = indexOfSelected();
       const current = projects[index];
       name.textContent = current ? current.name : "No project";
+      labelName.textContent = name.textContent;
       pos.textContent = current ? `${index + 1}/${projects.length}` : "";
-      main.disabled = !current;
-      chevron.disabled = !current;
       main.setAttribute("aria-label", current ? `${current.name}, project ${index + 1} of ${projects.length}, go to the next project` : "No project");
+      if (single !== (projects.length < 2)) {      // the button and the label swap only when the count crosses one
+        single = projects.length < 2;
+        group.replaceChildren(single ? label : main, chevron);
+      }
+      list.hidden = projects.length === 0;
+      empty.hidden = projects.length > 0;
       list.replaceChildren(...projects.map((p, i) => {
         const optionId = `${listId}-o${i}`;
         const row = h("li", { class: `pui-list-item wb-option${p.id === selected ? " is-selected" : ""}`, id: optionId, role: "option", "aria-selected": String(p.id === selected) },

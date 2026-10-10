@@ -1,5 +1,6 @@
 // The Floor's Desk tab (handoff floor.md): the agent's documents from `artifacts` as a table (path, owner skill, size with the kind beside it:
-// text, Markdown, image or other, A-33, and modified),
+// text, Markdown, image or other, A-33, and modified; the Lobby's desk, which lists every document of the project, has the agent after the
+// owner skill: `agentColumn`),
 // a filter that works in the page over the rows already read (no request), a "bound" chip, and the states loading, empty,
 // truncated and no match. A row opens the viewer by its hash. A path is text: it wraps after "/", "-" and "." and never
 // inside a name. The desk draws what the operation returned; opening a file is a read.
@@ -10,8 +11,8 @@ import { deskRows, pathParts } from "../floor-model.js";
 import { busyLine, field } from "./widgets.js";
 
 export const NONE_IN_PROJECT = "The project has no documents under docs/ yet.";
-// Assumption (WP-9.5b): the handoff has no wording for an agent with none of its own; documents with no owner are on the Lobby's desk (E-22).
-export const NONE_OF_ITS_OWN = "No documents of this agent. Documents with no owner are on the Lobby's desk.";
+// Assumption (WP-9.5b): the handoff has no wording for an agent with none of its own. The Lobby's desk lists every document of the project (C-2).
+export const NONE_OF_ITS_OWN = "No documents of this agent. Every document is on the Lobby's desk.";
 
 /** A path as nodes with a `wbr` after each of "/", "-" and ".". */
 export function pathNodes(path) {
@@ -28,7 +29,7 @@ export function whenParts(text) {
 }
 
 /**
- * Create the Desk. env: {project, agent, open(path)}. Returns {el, update({documents, truncated, loading, error, elsewhere}),
+ * Create the Desk. env: {project, agent, open(path), agentColumn (the Lobby's: an "Agent" column after the owner skill)}. Returns {el, update({documents, truncated, loading, error, elsewhere}),
  * filterText(), focusRow(path)}; documents are the agent's rows of `artifacts`; `elsewhere` (optional) is how many rows of the
  * project are not this agent's, so that an agent with none of its own is not told that the project has none.
  */
@@ -53,13 +54,14 @@ export function createDeskTab(env) {
       const row = h("tr", { class: "wb-desk-row" },
         h("td", { "data-label": "Path", class: "wb-desk-path" }, open, r.bound ? h("span", { class: "pui-chip pui-muted pui-soft wb-chip-11", title: "bound to a decision" }, "bound", h("span", { class: "wb-sr", text: " to a decision" })) : null),
         h("td", { "data-label": "Owner skill", class: "mono wb-desk-owner", text: r.owner }),
+        env.agentColumn ? h("td", { "data-label": "Agent", class: "mono wb-desk-agent", text: r.agent || "—" }) : null,
         h("td", { "data-label": "Size", class: "wb-nowrap" }, r.size, r.kind ? h("span", { class: "wb-desk-kind wb-muted", text: `${r.size ? " · " : ""}${r.kind}` }) : null),
         h("td", { "data-label": "Modified", class: "wb-desk-when" }, ...whenParts(r.modified)));
       row.addEventListener("click", () => env.open(r.path));
       return row;
     }));
     const node = h("table", { class: "pui-table pui-hoverable wb-desk-table" },
-      h("thead", {}, h("tr", {}, ["Path", "Owner skill", "Size", "Modified"].map((t) => h("th", { scope: "col", text: t })))), body);
+      h("thead", {}, h("tr", {}, (env.agentColumn ? ["Path", "Owner skill", "Agent", "Size", "Modified"] : ["Path", "Owner skill", "Size", "Modified"]).map((t) => h("th", { scope: "col", text: t })))), body);
     arrowNav(node, "button.wb-path-button");
     return node;
   }

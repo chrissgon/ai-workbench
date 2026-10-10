@@ -2,7 +2,7 @@
 // they run under a test. Nothing is decided here: a request's state and a decision's actions are the service's own words.
 
 import * as format from "../format.js";
-import { PLANNING, drawersOf } from "../floor-model.js";
+import { drawersOf } from "../floor-model.js";
 import { windowState } from "../scene/look.js";
 
 export const POLL_BUSY_MS = 2000;     // the conversation is read every 2 seconds while a `say` job runs; otherwise only when the page reloads
@@ -53,9 +53,7 @@ export function lastId(messages) {
 
 /** "4 h ago", "12 min ago" or "just now". */
 export function ago(stamp, now) {
-  const short = format.age(stamp, now);
-  if (!short) return "";
-  return short === "now" ? "just now" : `${short} ago`;
+  return format.agoPhrase(format.age(stamp, now));
 }
 
 /** Who wrote a message, as the page words it. */
@@ -167,9 +165,9 @@ export function isNamed(messages, requestId) {
   return (messages || []).some((m) => m.role === "assistant" && m.task_id === requestId);
 }
 
-/** The documents of the Lobby's Desk: the rows of `artifacts` whose agent is the planning agent or none (no owner, or no single agent owns the skill). */
+/** The documents of the Lobby's Desk: every row of `artifacts` (C-2): the Lobby is the project's room; each row names its agent in a column. */
 export function lobbyDocuments(rows) {
-  return (Array.isArray(rows) ? rows : []).filter((d) => d && (!d.agent || d.agent === PLANNING));
+  return (Array.isArray(rows) ? rows : []).filter((d) => d && typeof d === "object");
 }
 
 /** The words of a request's state for its chip. */

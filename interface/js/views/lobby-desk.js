@@ -1,6 +1,5 @@
-// The Lobby's Desk tab (handoff lobby.md, "Desk tab"): the Floor's desk table and viewer showing the documents of `artifacts` that
-// belong to the planning agent: those with `agent` "planning" and those with no agent (no owner, or no single agent owns the skill:
-// WP-9.4b, E-22). The page reads `artifacts` (on every reload of the page, and when it is older than 5 seconds while the Desk is open or 30 otherwise) and puts a path in the
+// The Lobby's Desk tab (handoff lobby.md, "Desk tab"): the Floor's desk table and viewer showing every document of `artifacts` (C-2: the
+// Lobby is the project's room), with the agent of each as a column after the owner skill. The page reads `artifacts` (on every reload of the page, and when it is older than 5 seconds while the Desk is open or 30 otherwise) and puts a path in the
 // viewer only when the person clicks one; the viewer reads the file with `artifact` and shows it as text, or, for an image, with `artifactRaw` (A-33).
 
 import * as api from "../api.js";
@@ -19,7 +18,7 @@ const DOCS_IDLE_MS = 30000;
  */
 export function createLobbyDesk(env) {
   const { project } = env;
-  const desk = createDeskTab({ project, agent: PLANNING, open: env.open });
+  const desk = createDeskTab({ project, agent: PLANNING, open: env.open, agentColumn: true });
   let documents = null;      // {rows, truncated} as read, or null
   let error = null;
   let at = 0;

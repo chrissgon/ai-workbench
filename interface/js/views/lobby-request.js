@@ -8,7 +8,7 @@ import { failureText } from "../cards/plan-rows.js";
 import { h } from "../dom.js";
 import * as format from "../format.js";
 import * as router from "../router.js";
-import { ago, requestLine, requestWords, resolvedWord } from "./lobby-model.js";
+import { ago, flowOptions, requestLine, requestWords, resolvedWord } from "./lobby-model.js";
 
 /** The line of a decision that is no longer open: a chip with "<kind> <resolution>" and the title and age. */
 function resolvedLine(item, now) {
@@ -40,14 +40,18 @@ function pointer(project, item, now) {
 
 /**
  * One request's block. options: {api, project, request (a row of status.requests), body (the `task` answer, or null while it is
- * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request), announce(text),
+ * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request, flow), announce(text),
  * viaMessage (a message of the planning agent names the request; false for a request made from the form, OPEN-24), routeNotice
  * ({title, text} of a route that failed, or null: it sits under the request's line), expanded (the request's whole text is open) and
- * onExpand(open) (told when the person opens or closes it, so a rebuilt block can be given the state back)}.
+ * onExpand(open) (told when the person opens or closes it, so a rebuilt block can be given the state back), flows (the project's flows,
+ * read once, or null: with them a request that waits for its route has a flow select beside "Route it", E-20), flow (the choice to give the
+ * select back to a rebuilt block), onFlow(value) (told when the person chooses) and remembered (the flow chosen in the form this session,
+ * kept in memory: then there is no select and "Route it" sends that flow)}.
  * The plan card is drawn here only when a message names the request; otherwise its card is in the Inbox and this is a line that points at it.
- * Returns {el, focusCard(id)}.
+ * The block has an id (`wb-request-<n>`) that the route `#/p/<id>/lobby/conversation/request/<n>` scrolls to. Returns {el, focusCard(id), focusTitle()}.
  */
-export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true, routeNotice = null, expanded = false, onExpand = null }) {
+export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true, routeNotice = null, expanded = false, onExpand = null,
+  flows = null, flow = "", onFlow = null, remembered = "" }) {
   const line = requestLine(request, open);
   const words = requestWords(request, body);
   const number = `Request #${request.id}`;
@@ -71,13 +75,22 @@ export function createBlock({ api, project, request, body, open, now, signal, on
   const route = line.routable
     ? h("button", { class: "pui-btn pui-surface pui-outline wb-route-button", type: "button", text: routing ? "Routing..." : "Route it", disabled: Boolean(routing),
       "aria-label": `Route request ${request.id}` }) : null;
-  const row = h("div", { class: "wb-lobby-request-line", role: "group", "aria-label": line.name },
+  // After a reload the flow chosen in the form is forgotten: the line offers the flows beside "Route it" (E-20). The page never changes the request's text.
+  const options = flows ? flowOptions(flows) : [];
+  const chooser = route && !remembered && options.length > 1
+    ? h("select", { class: "pui-input wb-route-flow", "aria-label": `Flow for request ${request.id}`, disabled: Boolean(routing) }, options.map((o) => h("option", { value: o.value, text: o.label })))
+    : null;
+  if (chooser) {
+    chooser.value = flow || "";
+    chooser.addEventListener("change", () => { if (onFlow) onFlow(chooser.value); });
+  }
+  const row = h("div", { class: `wb-lobby-request-line${chooser ? " has-flow" : ""}`, role: "group", "aria-label": line.name },
     h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${request.id}` }),
     titleButton,
     line.state ? h("span", { class: "pui-chip pui-muted pui-soft wb-chip-small", text: line.state }) : null,
-    route, cancel);
+    chooser, route, cancel);
   if (cancel) cancel.addEventListener("click", () => onCancel(request, cancel));
-  if (route) route.addEventListener("click", () => onRoute(request));
+  if (route) route.addEventListener("click", () => onRoute(request, remembered || (chooser ? chooser.value : "")));
 
   const cards = new Map();
   const decisions = [];
@@ -95,9 +108,13 @@ export function createBlock({ api, project, request, body, open, now, signal, on
       decisions.push(resolvedLine(item, now));
     }
   }
-  const el = h("div", { class: "wb-request-block" }, line.final ? null : row, line.final ? null : fullText, line.final ? null : notice, ...decisions);
+  const el = h("div", { class: "wb-request-block", id: `wb-request-${request.id}`, tabindex: "-1" }, line.final ? null : row, line.final ? null : fullText, line.final ? null : notice, ...decisions);
   return {
     el,
+    /** Move the focus to the request's title (the block itself when the request is final and has no line). */
+    focusTitle() {
+      (line.final ? el : titleButton).focus();
+    },
     focusCard(id) {
       const card = cards.get(id);
       if (card) card.focus();

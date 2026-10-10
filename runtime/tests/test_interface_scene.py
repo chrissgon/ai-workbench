@@ -191,8 +191,8 @@ def test_the_router_reads_every_hash_form_and_falls_back_to_the_city_and_the_for
         ["building", i, None, None, None], ["building", i, None, None, None], ["floor", i, "marketing", "inbox", 12],
         ["lobby", i, None, "inbox", 3], ["control", i, None, "costs", None], ["building", i, None, None, None],
         ["building", i, None, None, None]]
-    assert got["hashes"] == ["#/", f"#/p/{i}", f"#/p/{i}/floor/marketing/inbox/12", f"#/p/{i}/lobby/inbox/3", f"#/p/{i}/control/costs",
-                             f"#/p/{i}", "#/", None]
+    assert got["hashes"] == ["#/city", f"#/p/{i}", f"#/p/{i}/floor/marketing/inbox/12", f"#/p/{i}/lobby/inbox/3", f"#/p/{i}/control/costs",
+                             f"#/p/{i}", "#/city", None]      # C-1: the City has its own route
     assert got["roundTrip"] == [12, "lobby"]
     assert got["age"] == ["now", "12 min", "5 h", "2 d", "", ""]
     assert got["words"] == ["2 days", "1 hour", "just now"]
@@ -280,10 +280,10 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     assert got["subs"] == ["task #5 running", "no task running", "not accepted yet"]
     assert got["linkNames"][0] == "shop, 3 decisions waiting, task #5 running"
     assert got["canvasLabel"] == "City with 3 projects, 4 decisions waiting"
-    # the waiting rows: oldest first, a decision on a request goes to the lobby's inbox, the others to the agent's floor
+    # the waiting rows: oldest first, a plan goes to its request's line, another decision on a request to the lobby's inbox, the others to the agent's floor
     assert [r[0] for r in got["waiting"]] == [21, 12, 11, 13]
     by_id = {r[0]: r for r in got["waiting"]}
-    assert by_id[11][1:5] == ["Plan", "shop · Lobby", "4 h", "#/p/A/lobby/inbox/11"]
+    assert by_id[11][1:5] == ["Plan", "shop · Lobby", "4 h", "#/p/A/lobby/conversation/request/1"], "C-2: the row of a plan opens the Conversation at its request's line"
     assert by_id[12][4] == "#/p/A/floor/brand/inbox/12" and by_id[13][4] == "#/p/A/floor/marketing/inbox/13"
     assert by_id[21][4] == "#/p/B/lobby/inbox/21" and by_id[21][3] == "2 d" and by_id[21][2] == "docs · Lobby", \
         "a decision with no agent (a project with no area agents, or a decision on a request) is the lobby's"

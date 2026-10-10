@@ -227,7 +227,7 @@ def test_the_models_keep_the_whole_building_the_floors_the_kpis_and_the_bar_when
     assert got["floor"]["tasks"] == [4, 2] and got["floor"]["decisions"] == 1 and got["floor"]["title"] == "Marketing · Marketing agent"
     assert got["floor"]["sub"].endswith("not accepted") and "not accepted" in got["floor"]["canvas"]
     assert got["floorNoData"] == [True, False]
-    assert got["board"] == "Task 4"
+    assert got["board"] == "#4 Task 4 · current task"
     b = got["building"]
     assert b["floors"] == [2, 2] and b["windows"][1] == ["grey", "grey"] and b["decisions"] == [1, 1] and b["waits"].count(True) == 1
     assert b["accepted"] is False and b["tip"] == "northwind-shop: not accepted yet" and b["sub"] == "not accepted yet"
