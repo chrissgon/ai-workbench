@@ -676,6 +676,8 @@ import { createKit } from "@JS@/scene/kit.js";
 import { BUILDERS } from "@JS@/scene/engine.js";
 import { sceneModel, OPENS } from "@JS@/views/control-model.js";
 import { buildServer } from "@JS@/views/control-scene.js";
+import { serverTones } from "@JS@/scene/palette.js";
+import { FRAME, RACK, SCREEN } from "@JS@/scene/server-room.js";
 
 const c = (hex) => new THREE.Color(hex);
 const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050) };
@@ -689,15 +691,27 @@ const conn = (classes, secrets, image) => ({
 });
 const row = (day, runs) => ({ day, agent: "a", model: "m", adapter: "x", runs, tokens: null, recorded_usd: null, recomputed_usd: null, unknown_runs: 0, price: null });
 
+// R-51: the room is baked into batches with a colour on every vertex, so the lights and the bars are read from the vertices of the rack and wall-screen meshes: a light is a quad (six vertices)
 function count(model) {
   const kit = createKit(palette);
   const built = buildServer(kit, model);
-  const meshes = [];
-  built.group.traverse((o) => { if (o.isMesh) meshes.push(o); });
-  const basic = meshes.filter((m) => m.material.isMeshBasicMaterial);
-  const of = (colour) => basic.filter((m) => hex(m.material.color) === hex(colour));
-  const bars = of(T.theme).map((m) => ({ x: +m.position.x.toFixed(2), h: +m.scale.y.toFixed(4) })).sort((a, b) => a.x - b.x);
-  const out = { ok: of(T.success).length, bad: of(T.error).length, off: of(T.border).length, bars, hits: built.hits.map((h) => [h.id, h.tip]), labels: built.labels.length, beacons: built.beacons.length, markers: built.markers.length, meshes: meshes.length,
+  const S = serverTones(palette);
+  const meshOf = (group) => { const out = []; group.traverse((o) => { if (o.isMesh) out.push(o); }); return out; };
+  const quads = (mesh) => {
+    const p = mesh.geometry.getAttribute("position"); const k = mesh.geometry.getAttribute("color"); const out = [];
+    for (let i = 0; i + 5 < p.count; i += 6) {
+      const xs = [], ys = [];
+      for (let j = 0; j < 6; j++) { xs.push(p.getX(i + j)); ys.push(p.getY(i + j)); }
+      out.push({ hex: new THREE.Color(k.getX(i), k.getY(i), k.getZ(i)).getHex(), x0: Math.min(...xs), y0: Math.min(...ys), y1: Math.max(...ys) });
+    }
+    return out;
+  };
+  const racks = built.hits.filter((h) => h.id.startsWith("rack")).flatMap((h) => meshOf(h.object).flatMap(quads));
+  const wall = built.hits.filter((h) => h.id === "wall").flatMap((h) => meshOf(h.object).flatMap(quads));
+  const of = (list, colour) => list.filter((q) => q.hex === hex(colour));
+  const meshes = meshOf(built.group);
+  const bars = of(wall, S.bar).map((q) => ({ x: +q.x0.toFixed(3), h: +(q.y1 - q.y0).toFixed(4) })).sort((a, b) => a.x - b.x);
+  const out = { ok: of(racks, S.ledOk).length, bad: of(racks, S.ledBad).length, off: of(racks, S.ledOff).length, bars, hits: built.hits.map((h) => [h.id, h.tip]), labels: built.labels.length, beacons: built.beacons.length, markers: built.markers.length, meshes: meshes.length,
     moving: built.group.children.length > 0 };
   const box = new THREE.Box3().setFromObject(built.group);
   out.size = [+(box.max.x - box.min.x).toFixed(1), +(box.max.y - box.min.y).toFixed(1), +(box.max.z - box.min.z).toFixed(1)];
@@ -724,6 +738,7 @@ out.notAcceptedBuilt = count(sceneModel({ accepted: false, connections, costs })
 // a window of two days sits at the right end of the seven bars
 out.short = sceneModel({ accepted: true, connections, costs: { since: "2026-10-06", rows: [row("2026-10-06", 2), row("2026-10-07", 4)] } }).bars.map((v) => +v.toFixed(2));
 out.opens = OPENS;
+out.slot = [FRAME.sx, SCREEN.pitch, SCREEN.full, FRAME.sy];
 out.unread = sceneModel({ accepted: true, connections: null }).racks.map((r) => r.tip);
 console.log(JSON.stringify(out));
 """
@@ -737,20 +752,23 @@ def test_the_server_room_has_one_led_per_connection_fact_and_one_bar_per_summed_
     assert model["ready"] is True and model["facts"] == 11 and model["missing"] == 3
     assert model["leds"] == ",".join(["ok", "ok", "bad", "ok", "ok", "bad", "ok", "ok", "bad", "ok", "ok"] + ["off"] * 10), \
         "each class, then each secret, then the image; the slots left over are off"
-    assert model["racks"] == [["store · tasks", 2, "store · tasks · 2 missing · Connections tab"],
-                              ["integrations", 1, "integrations · 1 missing · Connections tab"],
-                              ["vcs · publishers", 0, "vcs · publishers · no connection here"]]
+    # R-51: the page's tooltip names the racks as one object, "Connections · 2 missing · Connections tab" (control-room.html), with the count of every fact; each rack keeps its own count
+    tip = "Connections · 3 missing · Connections tab"
+    assert model["racks"] == [["store · tasks", 2, tip], ["integrations", 1, tip], ["vcs · publishers", 0, tip]]
     # days Oct 1 to Oct 7: 4, 5, 0, 8, 0, 0, 12 runs, each over the largest day
     assert model["bars"] == [0.3333, 0.4167, 0, 0.6667, 0, 0, 1]
     assert model["label"] == "Server room: 3 racks, 3 connections missing, runs of the last 7 days"
     full = got["full"]
     assert (full["ok"], full["bad"], full["off"]) == (8, 3, 10), "the LEDs drawn are the facts: 8 found, 3 missing, 10 slots with no fact"
-    assert [b["h"] for b in full["bars"]] == [round(1.05 * v, 4) for v in (0.3333, 0.4167, 0.6667, 1)], "a bar per day with runs, 1.05 high at most"
-    assert [b["x"] for b in full["bars"]] == [0, 0.4, 1.2, 2.4], "bars at 0.4 apart, an empty day draws none"
+    sx, pitch, high, sy = got["slot"]
+    # R-51 changes the wall screen's bars (the page's: 0.925 of a page unit at most, a slot every 0.4, a cap on each bar) and so these two lines; the model's bars are the same
+    assert [b["h"] for b in full["bars"]] == [round(high * sy * v, 4) for v in (0.3333, 0.4167, 0.6667, 1)], "a bar per day with runs, 0.925 of a page unit high at most"
+    xs = [b["x"] for b in full["bars"]]
+    assert [round((x - xs[0]) / (pitch * sx), 2) for x in xs] == [0, 1, 3, 6], "bars a slot (0.4) apart, an empty day draws none"
     assert [h[0] for h in full["hits"]] == ["rack-1", "rack-2", "rack-3", "wall", "console"]
     assert full["hits"][3][1] == "Runs by day · Costs tab" and full["hits"][4][1] == "Console · Skills tab"
     assert full["labels"] == 0 and full["beacons"] == 0 and full["markers"] == 0, "no label, no beacon, no marker: nothing in it moves or says anything"
-    assert 80 < full["meshes"] < 400, "tens to a few hundred meshes"
+    assert 5 <= full["meshes"] <= 20, "R-51: batched statics, a handful of meshes (it was a hundred and fifty boxes)"
     assert got["many"]["facts"] == 24 and got["many"]["missing"] == 13 and got["many"]["leds"] == 21 and got["many"]["off"] == 0
     assert (got["many"]["built"]["ok"], got["many"]["built"]["bad"], got["many"]["built"]["off"]) == (10, 11, 0), "21 slots, 24 facts: the first 21 are drawn"
     assert (got["loading"]["ok"], got["loading"]["bad"], got["loading"]["off"], got["loading"]["bars"]) == (0, 0, 21, []), "loading: every LED off and no bar"
@@ -758,7 +776,7 @@ def test_the_server_room_has_one_led_per_connection_fact_and_one_bar_per_summed_
     assert got["notAccepted"] == {"ready": False, "label": "Server room, waiting for the configuration to be accepted"}
     assert (got["notAcceptedBuilt"]["ok"], got["notAcceptedBuilt"]["bad"], got["notAcceptedBuilt"]["bars"]) == (0, 0, []), "a project that is not accepted is dim"
     assert got["short"] == [0, 0, 0, 0, 0, 0.5, 1]
-    assert got["unread"] == ["store · tasks · nothing read yet", "integrations · nothing read yet", "vcs · publishers · nothing read yet"], "before the connections are read the racks say so"
+    assert got["unread"] == ["Connections · nothing read yet"] * 3, "before the connections are read the racks say so"
     assert got["opens"] == {"rack-1": "connections", "rack-2": "connections", "rack-3": "connections", "wall": "costs", "console": "skills"}
 
 
@@ -768,7 +786,8 @@ def test_the_server_room_builder_draws_with_the_engines_kit_holds_no_colour_and_
     assert not re.search(r"requestAnimationFrame|setInterval|setTimeout|Math\.random|Math\.sin|\.style\b|createElement|innerHTML", scene), \
         "nothing moves, nothing random, no markup of its own, no style"
     assert "BUILDERS.server = buildServer" in scene and "createKit" not in scene, "the engine's kit and registry are used, not copied"
-    for token in ("T.success", "T.error", "T.border", "T.theme", "palette.screenOff", "palette.ink"):
+    # R-51: the room's tones are the recipes of the page's scene.css in palette.js (roomTones for the desk and the chair, serverTones for the racks and the wall screen), not tokens read one by one
+    for token in ("roomTones(palette)", "serverTones(palette)", "buildGround(kit, 1)", "boxBrackets", "planeBrackets"):
         assert token in scene, f"the scene reads {token}"
     engine = (JS / "scene" / "engine.js").read_text(encoding="utf-8")
     assert "buildServer" not in engine and "server:" not in engine and '"server"' not in engine, "the engine is not edited: the scene registers itself"

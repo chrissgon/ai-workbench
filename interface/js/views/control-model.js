@@ -358,14 +358,17 @@ export const RACKS = Object.freeze([
 export const UNITS = 7;
 export const SLOTS = RACKS.length * UNITS;
 export const OPENS = Object.freeze({ "rack-1": "connections", "rack-2": "connections", "rack-3": "connections", wall: "costs", console: "skills" });
+/** The object of each tab, the one the scene marks with its corner brackets while the tab is open (R-51): the console on Skills, the wall screen on Costs, the racks on Connections. */
+export const OPEN_OF = Object.freeze({ skills: Object.freeze(["console"]), costs: Object.freeze(["wall"]), connections: Object.freeze(["rack-1", "rack-2", "rack-3"]) });
 
 /**
  * What the scene shows, from what the page has read: {ready, leds: [21 of "ok"|"bad"|"off"], facts, missing, racks: [{id, name,
  * missing, tip}], bars: [7 numbers from 0 to 1], tips: {wall, console}, label}. `ready` is false while the proof is loading,
  * for a project that is not accepted or before the connections have been read: every LED is then off and there are no bars.
- * An LED has one fact: the first 21 facts fill the racks from the top unit down; `missing` counts every fact the operation gave.
+ * An LED has one fact: the first 21 facts fill the racks from the top unit down; `missing` counts every fact the operation gave. `open` is the ids of the objects of the open `tab`
+ * (a name this screen does not have is Skills), which the scene marks with corner brackets (R-51); none while the room is loading or not accepted (`ready` false), as the page draws it.
  */
-export function sceneModel({ accepted = true, connections = null, costs = null } = {}) {
+export function sceneModel({ accepted = true, connections = null, costs = null, tab = "skills" } = {}) {
   const facts = [];
   if (accepted && connections) {
     for (const row of classRows(connections)) facts.push(row.found);
@@ -375,11 +378,12 @@ export function sceneModel({ accepted = true, connections = null, costs = null }
   const missing = facts.filter((ok) => !ok).length;
   const leds = Array.from({ length: SLOTS }, (_, i) => (i < facts.length ? (facts[i] ? "ok" : "bad") : "off"));
   const read = Boolean(accepted && connections);
+  // R-51, the page's tooltip: the racks are one object (one set of corner brackets, one way into Connections) and say "Connections · 2 missing · Connections tab"; each rack still has its own count
+  const rackTip = !read ? "Connections · nothing read yet" : missing ? `Connections · ${missing} missing · Connections tab` : "Connections · all found · Connections tab";
   const racks = RACKS.map((rack, r) => {
     const here = facts.slice(r * UNITS, (r + 1) * UNITS);
     const gone = here.filter((ok) => !ok).length;
-    const tip = !here.length ? `${rack.name} · ${read ? "no connection here" : "nothing read yet"}` : gone ? `${rack.name} · ${gone} missing · Connections tab` : `${rack.name} · all found · Connections tab`;
-    return { id: rack.id, name: rack.name, missing: gone, tip };
+    return { id: rack.id, name: rack.name, missing: gone, tip: rackTip };
   });
   const bars = Array.from({ length: 7 }, () => 0);
   if (accepted && costs && Array.isArray(costs.rows)) {
@@ -393,5 +397,5 @@ export function sceneModel({ accepted = true, connections = null, costs = null }
   const label = ready
     ? `Server room: ${RACKS.length} racks, ${missing} ${missing === 1 ? "connection" : "connections"} missing, runs of the last 7 days`
     : accepted ? "Server room, loading" : "Server room, waiting for the configuration to be accepted";
-  return { ready, leds, facts: facts.length, missing, racks, bars, tips: { wall: "Runs by day · Costs tab", console: "Console · Skills tab" }, label };
+  return { ready, leds, facts: facts.length, missing, racks, bars, tips: { wall: "Runs by day · Costs tab", console: "Console · Skills tab" }, label, open: ready ? [...OPEN_OF[tabOf(tab)]] : [] };
 }

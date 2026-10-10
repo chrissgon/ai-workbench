@@ -619,11 +619,11 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     assert "onRestored" in (JS / "views" / "city.js").read_text(encoding="utf-8"), "the scene host is shown again after a restored context"
     assert "export const CAMERA_MS = 1023" in engine and "export const OPEN_MS = 1439" in engine, "the prototype's durations: ln(100) over 4.5 and 3.2 a second"
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
-                 "building.js", "world.js", "tower.js", "furniture.js", "plates.js", "owl-build.js", "owl-motion.js", "room-frame.js", "room-words.js"):   # R-41: the figure is the owl
+                 "building.js", "world.js", "tower.js", "furniture.js", "plates.js", "owl-build.js", "owl-motion.js", "room-frame.js", "room-words.js", "server-room.js"):   # R-41: the figure is the owl; R-51: the server room
         assert (SCENE / name).is_file()
     # 23 modules before round 4; R-41 and R4D-2 add owl.js and svgpath.js, R-19 and R-20 city-motion.js, R-17 and R-20 marks.js; R4-B2 drops figure.js (R-24, R-41: the agent is the
-    # owl) and adds owl-build.js, owl-motion.js (R-41), room-frame.js (R-23) and room-words.js (R-31)
-    assert len(list(SCENE.glob("*.js"))) == 30 and (SCENE / "tween.js").is_file()
+    # owl) and adds owl-build.js, owl-motion.js (R-41), room-frame.js (R-23) and room-words.js (R-31); R4-B3 adds server-room.js (R-51: the server room's measures)
+    assert len(list(SCENE.glob("*.js"))) == 31 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():

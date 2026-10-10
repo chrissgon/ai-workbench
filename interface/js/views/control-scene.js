@@ -1,114 +1,88 @@
-// The Control room's small scene (handoff scene.md 5.6, control-room.md "Small scene"): a server room with three racks
-// of seven units and an LED on each, a wall screen with seven bars and a console desk. It draws facts, never progress, and
-// nothing in it moves. The LEDs are the `connections` facts (each class, then each secret, then the image: success lit,
-// error when missing; a slot with no fact is off), the bars are `costs.rows` summed by day over the chart's seven days, scaled to
-// the largest day. Hover shows a tooltip, a click opens the tab that holds the same facts as HTML (racks: Connections, wall
-// screen: Costs, console: Skills). There are no labels and no text in 3D.
+// The Control room's small scene (R-51, `control-room.html`): a server room drawn in the City's style, every object a fact. Three racks of seven units, each with the fact's light
+// (the `connections` facts: each class, then each secret, then the image; success lit, error when missing, dim when the unit carries none), a wall screen with a capped bar for each
+// of the runs of the last seven days (`costs.rows` summed by day, as a share of the largest day), and the console, which carries no data and is the way into Skills. No plant: it
+// carried no fact. The object of the open tab wears corner brackets (the console on Skills, the wall screen on Costs, the racks on Connections) and each object has the dark tooltip;
+// a click opens the tab that holds the same facts as HTML. The room is static: nothing in it moves, and there is no label and no text in 3D.
 //
-// What it shows is worked out by sceneModel in control-model.js (pure, tested under Node); the builder takes the engine's kit, as the City's does, and
-// registers itself as the scene kind "server" through the engine's BUILDERS, so the engine is not edited.
+// What it shows is worked out by sceneModel in control-model.js (pure, tested under Node); the builder takes the engine's kit, as the City's does, and registers itself as the scene
+// kind "server" through the engine's BUILDERS, so the engine is not edited. The measures are the page's, in `scene/server-room.js`; the tones are `roomTones` and `serverTones`
+// (palette.js), recipes of the page's `scene.css`; the statics are baked into a few batches (kit.batch): one for the shell, one for each rack, the wall screen and the console.
 
+import { buildGround, KERB } from "../scene/city.js";
 import { BUILDERS } from "../scene/engine.js";
-import { plant } from "../scene/props.js";
+import { boxBrackets, planeBrackets } from "../scene/marks.js";
+import { roomTones, serverTones } from "../scene/palette.js";
+import { pageBatch } from "../scene/room-frame.js";
+import { BRACKETS, FRAME, LEDGE, ROOM, consoleDesk, rack, shell, tray, wallScreen } from "../scene/server-room.js";
+import { topOf } from "../scene/world.js";
 import { RACKS, UNITS } from "./control-model.js";
 
-// --- the builder -------------------------------------------------------------------------------------------------------------
+/** The canvas width under which the room wears no brackets: the phone (the page's phone frames draw none). */
+export const MARKS_MIN_WIDTH = 640;
 
-const W = 6.4;
-const D = 4.8;
-const H = 2.8;
-
-/** The tool's task chair (scene.md 5.1), facing the desk that lies toward negative z: its back is on the positive side. */
-function chair(kit, parent, x, z) {
-  const { THREE, palette } = kit;
-  const g = new THREE.Group();
-  g.position.set(x, 0, z);
-  parent.add(g);
-  for (let k = 0; k < 5; k++) {
-    const arm = new THREE.Group();
-    arm.rotation.y = (k * 2 * Math.PI) / 5;
-    g.add(arm);
-    kit.box(0.3, 0.04, 0.05, 0.15, 0.07, 0, palette.metal, { parent: arm });
-    kit.mesh(new THREE.SphereGeometry(0.035, 6, 4), palette.ink, 0.3, 0.035, 0, { parent: arm });
-  }
-  kit.cyl(0.03, 0.03, 0.34, 6, palette.metal, 0, 0.08, 0, { parent: g });
-  kit.box(0.5, 0.08, 0.48, 0, 0.4, 0, palette.ink, { parent: g, shell: true });
-  kit.box(0.46, 0.62, 0.08, 0, 0.48, 0.24, palette.ink, { parent: g, shell: true });
-  kit.box(0.05, 0.2, 0.05, 0, 0.4, 0.2, palette.metal, { parent: g });
-  for (const sx of [-0.27, 0.27]) kit.box(0.05, 0.04, 0.32, sx, 0.62, 0, palette.ink, { parent: g });
-  return g;
-}
-
-function rack(kit, parent, spec, model, r) {
-  const { THREE, palette } = kit;
-  const T = palette.T;
-  const x = -W / 2 + 0.75;
-  const g = new THREE.Group();
-  g.position.set(x, 0, spec.z);
-  parent.add(g);
-  kit.box(0.9, 2.2, 1.0, 0, 0, 0, palette.bg, { parent: g, edges: true, shell: true });
-  kit.box(0.02, 2.0, 0.86, 0.46, 0.1, 0, palette.ink, { parent: g });
-  const unit = palette.mix(palette.ink, palette.bg, 0.15);
-  for (let u = 0; u < UNITS; u++) {
-    const y = 0.38 + 0.27 * u;
-    kit.box(0.02, 0.19, 0.78, 0.47, y, 0, unit, { parent: g, cast: false });
-    // the slot bar, then the LED: the first fact is on the top unit of the first rack
-    kit.box(0.03, 0.03, 0.3, 0.48, y + 0.08, -0.15, T.border, { parent: g, cast: false });
-    const state = model.leds[r * UNITS + (UNITS - 1 - u)];
-    const colour = state === "ok" ? T.success : state === "bad" ? T.error : T.border;
-    kit.box(0.03, 0.05, 0.05, 0.48, y + 0.07, 0.3, colour, { parent: g, cast: false, unlit: true });
-  }
-  return g;
-}
-
-/** Build the server room. model: sceneModel(). Returns what the engine needs, like buildCity. */
+/** Build the server room. model: sceneModel(). Returns what the engine needs, like buildCity: the group, the hits (each with its tooltip, the place of it and its brackets), `open`, `subject`. */
 export function buildServer(kit, model) {
   const { THREE, palette } = kit;
-  const T = palette.T;
+  const tones = { ...roomTones(palette), ...serverTones(palette) };
   const group = new THREE.Group();
-  const shell = palette.dark ? palette.mix(T.emphasis, T.text, 0.1) : palette.shell;
-  kit.box(W, 0.2, D, 0, 0, 0, palette.mix(palette.bg, T.emphasis, 0.45), { parent: group, edges: true });
-  // the room's outline: the route selects the Control room, so the engine draws it while the room is on screen (WP-9.8)
-  const edge = kit.line([[-W / 2, 0.21, D / 2], [W / 2, 0.21, D / 2], [W / 2, 0.21, -D / 2]], kit.themeLine, group);
-  edge.visible = false;
-  kit.box(W, H, 0.14, 0, 0.2, -D / 2 + 0.07, shell, { parent: group, edges: true });
-  kit.box(0.14, H, D, -W / 2 + 0.07, 0.2, 0, shell, { parent: group, edges: true });
+  group.add(buildGround(kit, 1).group);     // the block the room stands on and the streets round it, as the page draws them
   const room = new THREE.Group();
-  room.position.y = 0.2;
+  room.position.y = KERB;
   group.add(room);
+  const make = (batch) => pageBatch(batch, FRAME);
+  const baked = (draw, parent) => {
+    const batch = kit.batch();
+    draw(make(batch));
+    return batch.mesh(parent, { cast: false });
+  };
+  // the brackets of an object: solids in the brand colour, built hidden and shown by the engine; drawn, never picked
+  const holder = (mesh) => {
+    const marks = new THREE.Group();
+    marks.visible = false;
+    marks.userData.brackets = true;
+    marks.add(mesh);
+    room.add(marks);
+    return marks;
+  };
+  const tone = tones.bracket;
+
+  baked((pb) => { shell(pb, tones); tray(pb, tones); }, room);
 
   const hits = [];
-  RACKS.forEach((spec, r) => hits.push({ object: rack(kit, room, spec, model, r), id: spec.id, tip: model.racks[r].tip }));
+  const racksMarks = holder(boxBrackets(kit, make, { ...BRACKETS.racks, tone }));
+  RACKS.forEach((spec, r) => {
+    const object = new THREE.Group();
+    room.add(object);
+    // the first fact is on the top unit of the first rack: the unit u from the bottom has the light of fact r * 7 + (6 - u)
+    const lights = Array.from({ length: UNITS }, (_, u) => model.leds[r * UNITS + (UNITS - 1 - u)]);
+    baked((pb) => rack(pb, tones, r, lights), object);
+    hits.push({ object, id: spec.id, tip: model.racks[r].tip, marks: racksMarks, anchor: topOf(THREE, object) });
+  });
 
   const wall = new THREE.Group();
   room.add(wall);
-  const sz = -D / 2 + 0.17;
-  kit.box(3.0, 1.4, 0.06, 1.2, 1.05, sz, palette.ink, { parent: wall, shell: true });
-  model.bars.forEach((v, i) => {
-    if (v > 0) kit.box(0.26, 1.05 * v, 0.02, i * 0.4, 1.17, sz + 0.04, T.theme, { parent: wall, cast: false, unlit: true });
-  });
-  hits.push({ object: wall, id: "wall", tip: model.tips.wall });
+  baked((pb) => wallScreen(pb, tones, model.bars), wall);
+  hits.push({ object: wall, id: "wall", tip: model.tips.wall, marks: holder(planeBrackets(kit, make, { ...BRACKETS.wall, tone })), anchor: topOf(THREE, wall) });
 
   const desk = new THREE.Group();
   room.add(desk);
-  kit.box(2.4, 0.06, 0.85, 1.2, 0.72, 0.55, palette.deskTop, { parent: desk, edges: true, shell: true });
-  kit.box(2.4, 0.72, 0.06, 1.2, 0, 0.55 - 0.4, palette.deskTop, { parent: desk });
-  for (const lx of [0.08, 2.32]) kit.cyl(0.025, 0.025, 0.72, 6, palette.metal, lx, 0, 0.55 + 0.36, { parent: desk });
-  for (const mx of [0.7, 1.7]) {
-    kit.box(0.04, 0.2, 0.04, mx, 0.78, 0.45, palette.metal, { parent: desk });
-    kit.box(0.76, 0.48, 0.05, mx, 0.96, 0.45, palette.ink, { parent: desk });
-    kit.box(0.68, 0.4, 0.01, mx, 1.0, 0.485, palette.screenOff, { parent: desk, cast: false });
-  }
-  chair(kit, desk, 1.2, 1.4);
-  hits.push({ object: desk, id: "console", tip: model.tips.console });
-  plant(kit, room, 2.75, 1.95, 1.15);
+  baked((pb) => consoleDesk(pb, tones), desk);
+  hits.push({ object: desk, id: "console", tip: model.tips.console, marks: holder(boxBrackets(kit, make, { ...BRACKETS.console, tone })), anchor: topOf(THREE, desk) });
 
-  // the words (the tooltips; there is no label): a model with the same structure changes them without building the room again
-  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((rack) => [rack.id, rack.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]) });
-  return { group, hits, labels: [], beacons: [], markers: [], outlines: [{ id: "room", lines: [edge] }], selected: "room", text };
+  // the part of the scene the camera frames: the room with its slab, not the city round it
+  const subject = () => new THREE.Box3(
+    new THREE.Vector3(FRAME.X(LEDGE.x0), KERB, FRAME.Z(LEDGE.z0)),
+    new THREE.Vector3(FRAME.X(LEDGE.x0 + LEDGE.w), KERB + FRAME.Y(ROOM.h), FRAME.Z(LEDGE.z0 + LEDGE.d)),
+  );
+
+  // the words (the tooltips; there is no label) and the object of the open tab: a model with the same structure changes them without building the room again
+  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((r) => [r.id, r.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]), open: m.open || [], noMarks: !m.ready });
+  // the page draws no brackets on its phone frames (under 640 px: `marksMinWidth`) nor while the room is loading or waiting for the configuration (`noMarks`: nothing is read), and the pointer's
+  // brackets stand down with them
+  return { group, hits, labels: [], beacons: [], markers: [], outlines: [], selected: null, open: model.open || [], noMarks: !model.ready, marksMinWidth: MARKS_MIN_WIDTH, subject, text };
 }
 
-/** What the room is made of, for a model: the LEDs and the bars; the tooltips and the label are words. */
+/** What the room is made of, for a model: the LEDs and the bars; the tooltips, the label and the open tab are words. */
 buildServer.structure = (model) => ({ ready: model.ready, leds: model.leds, bars: model.bars });
 
 BUILDERS.server = buildServer;

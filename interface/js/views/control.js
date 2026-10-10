@@ -98,6 +98,7 @@ export function createControlView(frame) {
       accepted: !(message && message.kind === "text"),
       connections: loads.connections.status === "ready" ? loads.connections.data : null,
       costs: sceneCosts,
+      tab,
     });
     engine.show("server", sceneModel, sceneModel.label);
   }
