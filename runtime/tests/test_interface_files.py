@@ -230,8 +230,6 @@ def test_the_page_sets_no_inline_script_and_no_token_in_a_url_or_storage_other_t
             continue
         text = path.read_text(encoding="utf-8")
         for pattern, name in FORBIDDEN_IN_MODULES:
-            if name == "localStorage" and path == INTERFACE / "js" / "mode.js":
-                continue      # D-2: the light/dark preference, one key; test_interface_adj_b1.py checks it is the only module and the only key
             assert not re.search(pattern, text), f"{rel(path)} uses {name}"
         if path.name != "token.js":
             assert "sessionStorage" not in text, f"{rel(path)}: the token module is the only one that touches sessionStorage"
@@ -759,7 +757,8 @@ def test_the_brand_pair_is_the_one_primary_token_and_is_set_once_at_root():
     assert re.findall(r"--pui-theme\s*:[^;]*;", css) == [f"--pui-theme: {BRAND_PAIR};"], "the primary token is declared once, with the pair, light then dark"
     root = re.search(r"^:root \{\n(.*?)^\}", css, re.S | re.M)
     assert root and lines[0].strip() in root.group(1), "the pair is set in the :root block, beside the other tokens"
-    assert not re.search(r"--pui-(?!theme\b)[a-z-]+\s*:", root.group(1)), "no other token of the library is set at :root by the page"
+    assert not re.search(r"--pui-(?!theme\b|radius\b)[a-z-]+\s*:", root.group(1)), "no other token of the library is set at :root by the page but the radius (R-12: 0.625 rem)"
+    assert re.search(r"--pui-radius: 0\.625rem;", root.group(1)), "R-12: the corners are 0.625 rem (10 px)"
     comment = css[:css.index(lines[0].strip())].rsplit("/*", 1)[-1]
     assert "brand" in comment.lower() and "*/" in comment, "a comment above the line names it the brand pair"
     colours = LITERAL_COLOUR.findall(css)
@@ -773,6 +772,8 @@ def test_the_brand_pair_is_the_one_primary_token_and_is_set_once_at_root():
         if path.name == "owl.js":   # R-41: the owl is the mark's own drawing in its fixed palette, the brand's exception: its brown is the pair's light half, and only that
             assert not re.search(r"C99A6E", path.read_text(encoding="utf-8"), re.I), "owl.js holds the light brown of the pair only (the mark's brown), never the dark one"
             continue
+        if path.name == "token-owl.js":
+            continue      # R-15, R-41: the owl is the brand's drawing and keeps the mark's own fixed palette (the owl module of the scene is the second such file)
         assert not re.search(r"6B4429|C99A6E", path.read_text(encoding="utf-8"), re.I), f"{rel(path)} holds a copy of the brand colour: it reads the token"
 
 
@@ -810,14 +811,14 @@ def test_the_mark_file_is_named_in_one_module_that_builds_an_img_and_nowhere_els
     brand = (INTERFACE / "js" / "brand.js").read_text(encoding="utf-8")
     assert 'const MARK_SRC = "./brand/openhora-mark.svg";' in brand and (INTERFACE / "brand" / "openhora-mark.svg").is_file()
     assert re.search(r'h\("img",\s*\{[^}]*\bsrc: MARK_SRC\b[^}]*\balt\b[^}]*\}', brand, re.S) and 'alt = "openhora"' in brand, "the mark is an <img> whose alt text is the product's name by default"
-    assert 'markImage(48, "")' in (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8"), "on the prompt the name stands beside the mark as text, so the image has an empty alt"
+    assert 'markImage(24, "")' in (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8"), "on the prompt the name stands beside the mark as text, so the image has an empty alt"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
-    assert re.search(r"@media \(max-width: 711px\) \{\s*\.wb-nav \.wb-mark \{ display: none; \}\s*\}", css), "the top bar's mark is hidden below 712 px, the prompt's is not"
+    assert "max-width: 711px" not in css, "R-1: the mark is in the top row's brand box, which a phone does not draw (D-3: the favicon carries the brand there); the 712 px rule is gone"
     assert not re.search(r"innerHTML|data:|createElementNS|insertAdjacentHTML", brand), "never markup from a string, never a data: URI"
     header = (INTERFACE / "js" / "frame" / "header.js").read_text(encoding="utf-8")
     prompt = (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8")
-    assert 'from "../brand.js"' in header and "markImage(20" in header, "the top bar shows the mark at 20 px"
-    assert 'from "../brand.js"' in prompt and "markImage(48" in prompt, "the token prompt shows the mark at 48 px"
+    assert 'from "../brand.js"' in header and "markImage(28" in header, "R-1: the top row's brand shows the mark at 28 px"
+    assert 'from "../brand.js"' in prompt and "markImage(24" in prompt, "R-13: the token prompt's bar shows the mark at 24 px"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
     for cls in ("wb-mark", "wb-brand", "wb-wordmark"):
         assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css), f"{cls} is a rule of the stylesheet"

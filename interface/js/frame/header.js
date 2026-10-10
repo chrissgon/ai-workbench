@@ -1,15 +1,20 @@
-// F-1 the back button and the breadcrumbs.
+// F-1 the top row's brand (R-1) and the dock's Back button and breadcrumbs (R-2).
 
 import { h } from "../dom.js";
 import { markImage } from "../brand.js";
 import { icon } from "./icons.js";
 
-/** The back button and the breadcrumb trail. */
+/** The owl mark and the wordmark in one raised box at the top left (R-1). The mark names the product; the wordmark beside it is not read twice. */
+export function createBrand() {
+  return h("div", { class: "wb-brand" }, markImage(28), h("span", { class: "wb-wordmark", "aria-hidden": "true", text: "openhora" }));
+}
+
+/** The back button and the breadcrumb trail: docked at the bottom left above the tracking bar, and the bottom bar's second row on a phone (R-2, R-10). */
 export function createNav() {
   const back = h("button", { class: "pui-btn pui-surface pui-outline wb-back", type: "button", "aria-label": "Back" }, icon("chevron-left", 16));
   const list = h("ol", { class: "wb-crumbs" });
   const nav = h("nav", { class: "wb-crumb-nav", "aria-label": "Breadcrumbs" }, list);
-  const el = h("div", { class: "wb-nav" }, back, markImage(20), nav);   // the mark is left of the breadcrumbs, whose first crumb keeps its place
+  const el = h("div", { class: "wb-nav" }, back, nav);
   let target = null;
   back.addEventListener("click", () => {
     if (target) window.location.hash = target;

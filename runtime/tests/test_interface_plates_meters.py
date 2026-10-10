@@ -354,8 +354,8 @@ def test_the_meters_say_which_model_they_count_and_the_caps_line_uses_the_same_w
     assert got["agent"]["names"] == ["Runs today 0 / 8", "Spend today $0.14 / $2.00"]
     assert got["card"].startswith("runs 3 / 8 · spend $0.14 / $2.00")
     assert [t[0] for t in got["plate"]] == ["Runs today 3 / 8", "Spend today $0.14 / $2.00"] and all(t[1] for t in got["plate"])
-    assert [k[2] for k in got["kpis"]] == ["Open decisions", "Runs today", "Spend today"]
-    assert got["kpis"][1][0] == "Runs today 17 of 70" and got["kpis"][2][0] == "Spend today $4.90 of $21.50 cap"
+    assert [k[2] for k in got["kpis"]] == ["Runs today", "Spend today"], "R-5: two cards; the count of open decisions is on \"Waiting for you\""
+    assert got["kpis"][0][0] == "Runs today 17 of 70" and got["kpis"][1][0] == "Spend today $4.90 of $21.50 cap"
     assert got["caps"]["text"] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00"
     assert "subscription or free credential" in got["caps"]["title"] and "metered credential" in got["caps"]["title"]
 
@@ -673,9 +673,9 @@ out.sums = [sums.usd, sums.usdRecorded, sums.usdReserved, sums.runsTotal];
 const kpis = createKpis();
 kpis.update({ decisions: 0, runs: 3, runsCap: 16, usd: 1.84, usdCap: 4, usdRecorded: 0.34, usdReserved: 1.5, runsTotal: 4 });
 const cards = all(kpis.el, ".pui-card");
-out.kpi = { note: all(cards[2], ".wb-kpi-note").map((n) => n.textContent), reserved: all(cards[2], ".wb-meter-reserved").length, aria: cards[2].attrs["aria-label"], runsTitle: cards[1].title };
+out.kpi = { note: all(cards[1], ".wb-kpi-note").map((n) => n.textContent), reserved: all(cards[1], ".wb-meter-reserved").length, aria: cards[1].attrs["aria-label"], runsTitle: cards[0].title };
 kpis.update({ decisions: 0, runs: 3, runsCap: 16, usd: 0.34, usdCap: 4, usdRecorded: 0.34, usdReserved: 0, runsTotal: 4 });
-out.kpiNoReserve = all(all(kpis.el, ".pui-card")[2], ".wb-kpi-note").map((n) => n.textContent);
+out.kpiNoReserve = all(all(kpis.el, ".pui-card")[1], ".wb-kpi-note").map((n) => n.textContent);
 
 // the caps line
 out.caps = control.capsLine([{ agent: "engineering", max_runs_per_day: 8, max_usd_per_day: 2 }], [agent({ runs_today: 5 })]);

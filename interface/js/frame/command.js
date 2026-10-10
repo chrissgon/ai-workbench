@@ -4,6 +4,7 @@
 // selected so that the keyboard copies it.
 
 import { h } from "../dom.js";
+import { icon } from "./icons.js";
 
 const RUNNERS = /^(python3 |uv run |\/)/;
 const BACK_AFTER_MS = 2000;
@@ -43,13 +44,14 @@ function selectNode(node) {
 }
 
 /**
- * The component. spec: {command, sentence?, label? (the Copy button's accessible name, default "Copy the command": a path says "Copy the path")}; env (for a test): {clipboard, select(), later(fn, ms)}. Returns the element, or null when there is no
+ * The component. spec: {command, sentence?, label? (the Copy button's accessible name, default "Copy the command": a path says "Copy the path"), icon? (the name of an icon drawn before the word, the token prompt's "copy")}; env (for a test): {clipboard, select(), later(fn, ms)}. Returns the element, or null when there is no
  * command. Text goes in as text; a command or a sentence with markup in it is shown as it came.
  */
 export function commandBlock(spec, env = null) {
   if (!spec || typeof spec.command !== "string" || !spec.command.trim()) return null;
   const code = h("code", { class: "wb-command-code", text: spec.command });
-  const button = h("button", { class: "pui-btn pui-surface pui-outline wb-copy", type: "button", "aria-label": spec.label || "Copy the command", text: "Copy" });
+  const word = h("span", { class: "wb-copy-label", text: "Copy" });
+  const button = h("button", { class: "pui-btn pui-surface pui-outline wb-copy", type: "button", "aria-label": spec.label || "Copy the command" }, spec.icon ? icon(spec.icon, 16) : null, word);
   const status = h("span", { class: "wb-copy-status wb-muted", role: "status", text: "" });
   const use = env || {
     clipboard: typeof navigator !== "undefined" && navigator.clipboard ? navigator.clipboard : null,
@@ -59,10 +61,12 @@ export function commandBlock(spec, env = null) {
   if (env && !env.select) use.select = () => selectNode(code);
   button.addEventListener("click", async () => {
     const result = await copyCommand(spec.command, { clipboard: use.clipboard, select: () => use.select() });
-    button.textContent = result === "copied" ? "Copied" : "Selected";
+    word.textContent = result === "copied" ? "Copied" : "Selected";
+    button.classList.add("is-done");
     status.textContent = result === "copied" ? "Copied to the clipboard." : "Selected: copy it with the keyboard.";
     use.later(() => {
-      button.textContent = "Copy";
+      word.textContent = "Copy";
+      button.classList.remove("is-done");
       status.textContent = "";
     }, BACK_AFTER_MS);
   });

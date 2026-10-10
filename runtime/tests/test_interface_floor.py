@@ -107,6 +107,7 @@ globalThis.Node = FakeNode;
 const document = new FakeNode("document");
 document.createElement = (tag) => new FakeNode(tag);
 document.createTextNode = (t) => new FakeText(t);
+document.createElementNS = (ns, tag) => new FakeNode(tag);
 document.activeElement = null;
 globalThis.document = document;
 globalThis.window = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { hash: "#/" } };

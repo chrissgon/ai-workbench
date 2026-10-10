@@ -475,7 +475,8 @@ console.log(JSON.stringify(out));
     assert got["header"] == {"side": "top", "amount": 64} and got["track"] == {"side": "bottom", "amount": 166}
     assert got["dockedPanel"] is None and got["nothing"] is None, "a part that does not touch the scene (the panel docked below it) takes nothing"
     frame = (JS / "frame" / "frame.js").read_text(encoding="utf-8")
-    assert "obstacleInset(part.getBoundingClientRect(), scene)" in frame and "kpis.el, header, actions" in frame, "every part over the scene is measured, none is assumed"
+    assert "obstacleInset(part.getBoundingClientRect(), scene)" in frame and "kpis.el, header, noticeBox.hidden ? null : noticeBox, dock" in frame, \
+        "every part over the scene is measured, none is assumed (R-1, R-2: the top row and the dock are the parts now; the header button of the actions is gone)"
 
 
 def test_the_in_between_layout_has_the_tablet_rules_of_the_handoff_and_the_panel_docks_below_900_px():
@@ -483,15 +484,16 @@ def test_the_in_between_layout_has_the_tablet_rules_of_the_handoff_and_the_panel
     block = css[css.index("the in-between layout (WP-9.11"):]
     assert "@media (min-width: 640px) and (max-width: 1099px)" in block and "@media (min-width: 640px) and (max-width: 899px)" in block
     mid = block[:block.index("@media (min-width: 640px) and (max-width: 899px)")]
-    for rule in (".wb-kpis { display: flex;", ".wb-kpi-long { display: none; }", ".wb-kpi-short { display: inline; }", ".wb-door-label, .wb-wait-btn-label { display: none; }",
-                 "--wb-panel-narrow: 340px", "--wb-plate-w: 230px", ".wb-track-left .wb-steps { overflow-x: auto; }", ".wb-plate:not(.is-row) .wb-plate-chips > .pui-badge { display: none; }"):
+    for rule in (".wb-door-label { display: none; }", "--wb-panel-narrow: 340px", "--wb-wait-w: 340px", "--wb-plate-w: 230px", ".wb-track-left .wb-steps { overflow-x: auto; }",
+                 ".wb-plate:not(.is-row) .wb-plate-chips > .pui-badge { display: none; }"):
         assert rule in mid, f"the tablet rule: {rule}"
+    assert ".wb-kpis { display: flex;" not in mid and ".wb-kpi-short { display: inline; }" not in mid, "R-5: the KPI cards stay a column of two in this band (R4D-6), the labels are the long ones"
     docked = block[block.index("@media (min-width: 640px) and (max-width: 899px)"):]
-    for rule in ("grid-template-areas: \"scene\" \"content\" \"track\"", ".wb-main { position: static;", ".wb-track { position: static;", ".wb-panel-floor, .wb-panel-building { height: auto; }"):
+    for rule in ("grid-template-areas: \"scene\" \"content\" \"track\"", ".wb-main { position: static;", ".wb-dock { position: static;", ".wb-panel-floor, .wb-panel-building { height: auto; }"):
         assert rule in docked, f"the docked panel: {rule}"
     assert ".wb-plate.is-tiny" in css and "is-tiny" in (SCENE / "labels.js").read_text(encoding="utf-8"), "a plate shortens to its name row when the stack still would not fit"
     kpis = (JS / "frame" / "kpis.js").read_text(encoding="utf-8")
-    assert all(word in kpis for word in ('"Decisions"', '"Runs"', '"Spend"', "wb-kpi-short", "wb-kpi-long")), "the cards carry their short labels"
+    assert all(word in kpis for word in ('"Runs"', '"Spend"', "wb-kpi-short", "wb-kpi-long")) and '"Decisions"' not in kpis, "the two cards carry their short labels (the phone shows them)"
     assert "plateWidth()" in (JS / "views" / "building.js").read_text(encoding="utf-8"), "the fit leaves the width of the plates as the stylesheet has them now"
 
 

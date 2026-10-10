@@ -49,6 +49,13 @@ export function agoPhrase(short) {
   return short === "now" ? "just now" : `${short} ago`;
 }
 
+/** How long a task has run, from the start of its last run: "for 12 min", "for 5 h", "for 2 d", "for under a minute"; "" when the stamp is unknown (R-8: how long, not since when). */
+export function runningFor(stamp, now) {
+  const short = age(stamp, now);
+  if (!short) return "";
+  return short === "now" ? "for under a minute" : `for ${short}`;
+}
+
 /** The age spelled for a screen reader: "2 days", "5 hours", "12 minutes". */
 export function ageWords(stamp, now) {
   const short = age(stamp, now);
