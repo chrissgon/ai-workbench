@@ -18,6 +18,7 @@ autonomy = st.load("autonomy")
 dispatcher = st.load("dispatcher")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_reads = st.load("ops_reads")
 ops_core = st.load("ops_core")
 operations = st.load("operations")
 
@@ -149,9 +150,9 @@ def test_a_missing_credential_with_a_readable_store_says_where_it_is_stored(tree
 
 
 def test_an_unreadable_secret_store_still_gets_the_service_start_line(tree):
-    line = ops._held_next(str(tree["project"]), "secret store")
+    line = ops_reads.held_next(str(tree["project"]), "secret store")
     assert line.startswith("uv run --with keyring==25.7.0 python3 ") and line.endswith(f"--project {tree['project']}")
-    assert ops._held_next(str(tree["project"]), "stopped") is None
+    assert ops_reads.held_next(str(tree["project"]), "stopped") is None
 
 
 def test_a_job_that_fails_with_a_command_carries_it_in_its_error(tree):
@@ -208,10 +209,12 @@ def test_the_credential_sentence_names_only_what_is_missing_with_its_registered_
         "control": {"total_jobs": 2, "web_jobs": {"strong": 1, "floor": 1}}})
     ops.dispatch(path)
     [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
-    assert "EXAMPLE_KEY_B" in entry["next"] and "EXAMPLE_KEY_A" not in entry["next"]
-    assert "keyring set openhora example-b" in entry["next"] and "<username>" not in entry["next"]
+    assert [c["name"] for c in entry["commands"]] == ["EXAMPLE_KEY_B"], "only what is missing is named, as a field"
+    assert entry["commands"][0]["command"].endswith("keyring set openhora example-b")
+    assert "EXAMPLE_KEY_A" not in entry["next"] and "<username>" not in entry["next"]
+    assert "keyring set" not in entry["next"], "A-34: the command is a field; the sentence does not write it a second time"
     monkeypatch.setattr(lab, "credential_usernames", lambda names: {})  # a name nobody registers: the table is named
-    assert "contracts/secrets.md" in ops._held_next(path, "credential", ["EXAMPLE_KEY_B"])
+    assert "contracts/secrets.md" in ops_reads.held_next(path, "credential", ["EXAMPLE_KEY_B"])
 
 
 def test_the_lab_reads_the_username_of_a_secret_from_the_manifests_of_the_adapters(tmp_path, monkeypatch):

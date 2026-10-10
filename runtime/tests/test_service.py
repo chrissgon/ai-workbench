@@ -932,6 +932,7 @@ def test_the_config_operation_never_refuses_an_unaccepted_configuration_and_the_
     [entry] = body["projects"]
     assert entry["config"] == {"sha256": digest, "accepted": False}
     assert "open_pending" not in entry and "running_task" not in entry
+    assert entry["folder"] == real.path, "A-34: the folder is in the entry of a project that is not accepted too: the page cannot read it elsewhere"
     assert "accept-config" in entry["message"] and digest in entry["message"]
     refused = call(real, "GET", api(real, "/status"))
     assert (refused[0], {k: refused[2][k] for k in ("error", "message")}) == (412, {"error": "not_configured", "message": entry["message"]})
@@ -940,7 +941,8 @@ def test_the_config_operation_never_refuses_an_unaccepted_configuration_and_the_
     assert ops.config(real.path)["accepted"] is True
     [entry] = call(real, "GET", "/api/v1/projects")[2]["projects"]
     assert entry["config"] == {"sha256": digest, "accepted": True} and entry["open_pending"] == 0 and entry["running_task"] is None
-    assert "message" not in entry and set(entry) == {"id", "name", "config", "open_pending", "running_task"}
+    assert "message" not in entry and set(entry) == {"id", "name", "folder", "config", "open_pending", "running_task"} \
+        and entry["folder"] == real.path
     # a change of the file makes it unaccepted again, and the list still answers
     with open(ops.project_config.path(real.path), "ab") as f:
         f.write(b" ")

@@ -188,6 +188,29 @@ def held_commands(project: str, reason: str, missing=None) -> list:
     return [{"name": n, "command": operations.keyring_line(users[n]) if n in users else None} for n in names]
 
 
+def held_next(project: str, reason: str, missing=None):
+    """What gets past a reason, as the sentence the terminal reads, or None when nothing a command or a sentence can say
+    does (a cap, an agent that is stopped: edits of the configuration). `secret store`: the command that starts the
+    service with the secret store's library. `credential` (the store is readable, the key is not in it): the first
+    sentence says where the credential is not; the command that stores each variable is a field of `held_commands`
+    that a page draws, so it is not written here a second time (A-34). What a field cannot say stays in the sentence:
+    for a variable with no registered username (`command` None) the second sentence (store it once, or export it) and a
+    line that points to the table of contracts/secrets.md, and, when the round named no variable and the reference
+    model's credential cannot be read, that pointer alone. It gives no value and invents none."""
+    if reason == "secret store":
+        return operations.service_line(core.ROOT, [project], uv=True)
+    if reason != "credential":
+        return None
+    first = "The credential is in neither the environment nor the secret store."
+    commands = held_commands(project, reason, missing)
+    if commands and all(c["command"] for c in commands):
+        return first
+    steps = "; ".join(f"{c['name']}: {operations.keyring_line('<username>')} (the username is in the table of contracts/secrets.md)"
+                      for c in commands if not c["command"]) or "the reference model's credential: see the table of contracts/secrets.md"
+    return (f"{first} Store it once, the value typed at a hidden prompt, or export it in the shell that starts the service. "
+            f"{steps}.")
+
+
 def drop_note(task: dict):
     """What the page needs to know before it sends a file to a task: {"web": whether the task's skill uses the web,
     "takes": whether a file can be handed over (drop.WEB_TASK_TAKES_DROP, true for a task that does not use the web),
