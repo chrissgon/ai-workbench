@@ -158,6 +158,46 @@ def test_a_first_read_that_failed_is_the_bands_lead_with_try_again_under_it_as_t
     assert 'return { kind: "error", lead, retry: true };' in main, "the failure of the first read is said as the lead"
 
 
+NOTICE = r"""
+import { FakeNode } from "@FAKE@";
+
+document.querySelector = () => null;
+window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+const { createFrame } = await import("@JS@/frame/frame.js");
+const f = createFrame(new FakeNode("div"), { onSelectProject() {}, onForgetToken() {}, onRetry() {} });
+const writes = [];
+f.el.style.setProperty = (name, value) => writes.push([name, value]);
+f.noticeBox.getBoundingClientRect = () => ({ top: 72, bottom: 326, height: 254 });
+f.el.getBoundingClientRect = () => ({ top: 0 });
+const mark = () => ({ has: f.el.cls().includes("has-notice"), last: writes.filter((w) => w[0] === "--wb-notice-bottom").slice(-1)[0] || null });
+const out = { before: mark() };
+f.notice({ kind: "error", lead: "tinykv-docs is not accepted yet", text: "the configuration has a hash", command: "python3 cli.py accept-config", mono: true });
+out.shown = mark();
+f.notice({ kind: "error", lead: "The service could not be reached. Is it still running?", retry: true });
+out.other = mark();
+f.sceneUnavailable(true);
+out.noScene = f.el.cls().filter((c) => c === "no-scene" || c === "has-notice");
+f.notice(null);
+out.gone = mark();
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_band_over_a_scene_with_no_webgl_is_measured_so_that_the_twin_list_can_stand_under_it(tmp_path):
+    got = run_scene_dom(tmp_path, NOTICE)
+    assert got["before"] == {"has": False, "last": None}, "no band, nothing written"
+    assert got["shown"] == {"has": True, "last": ["--wb-notice-bottom", "326px"]}, "a band: the frame says so with a class and writes where the band ends"
+    assert got["other"]["has"] is True, "another band keeps the class"
+    assert sorted(got["noScene"]) == ["has-notice", "no-scene"], "no WebGL and a band: the two classes the stylesheet's rule reads, on one frame"
+    assert got["gone"] == {"has": False, "last": ["--wb-notice-bottom", "0px"]}, "the band goes: the class and the number go"
+    css = CSS
+    assert re.search(r"\.wb-frame\.no-scene\.has-notice \.wb-buildings \{ top: calc\(var\(--wb-notice-bottom, 0px\) \+ 12px \+ 52px\); \}", css), \
+        "no WebGL and a band: the list stands 12 px under the band, and 52 px lower than the line that says there is no WebGL"
+    assert re.search(r'\.wb-frame\[data-screen="city"\]\.no-scene\.has-notice \.wb-scene-fallback \{ top: calc\(var\(--wb-notice-bottom, 0px\) \+ 12px\); \}', css), \
+        "the line that says there is no WebGL stands under the band too, not under it by chance"
+
+
 # --- the stylesheet --------------------------------------------------------------------------------------------------------------------------
 
 def test_the_projects_list_is_the_scenes_keyboard_twin_clipped_until_it_has_the_focus_and_drawn_where_the_page_draws_it():

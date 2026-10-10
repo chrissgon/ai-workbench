@@ -503,6 +503,9 @@ a.wb-crumb:hover { text-decoration: underline; }
 }
 .wb-buildings:focus-within { width: 260px; height: auto; max-height: calc(100% - var(--wb-kpi-top) - 200px); margin: 0; overflow-x: hidden; overflow-y: auto; clip-path: none; }   /* many projects scroll inside the card */
 .wb-frame.no-scene .wb-buildings { top: calc(var(--wb-kpi-top) + 52px); width: 260px; height: auto; max-height: calc(100% - var(--wb-kpi-top) - 252px); margin: 0; overflow-x: hidden; overflow-y: auto; clip-path: none; }
+/* a band over the scene (a failed read, a project not accepted) stands where the line and the list would: with no WebGL they go under it (the frame writes where it ends) */
+.wb-frame.no-scene.has-notice .wb-buildings { top: calc(var(--wb-notice-bottom, 0px) + 12px + 52px); }
+.wb-frame[data-screen="city"].no-scene.has-notice .wb-scene-fallback { top: calc(var(--wb-notice-bottom, 0px) + 12px); }
 /* no WebGL on the City: the line that says so is at the top, beside the KPI column (the page's frame), not in the middle of nothing */
 .wb-frame[data-screen="city"].no-scene .wb-scene-fallback {
   top: var(--wb-kpi-top);
