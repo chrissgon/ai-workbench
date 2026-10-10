@@ -546,3 +546,43 @@ def test_each_new_read_is_a_verb_of_the_terminal_with_its_own_flags(tree, capsys
     help_text = capsys.readouterr().out
     for verb in ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact"):
         assert f"python3 runtime/cli.py {verb} " in help_text, verb
+
+
+def test_a_resolved_decision_in_the_task_read_carries_the_text_the_person_saved(tree):
+    """A-41 (ADJ-B4): the `pending[]` rows of the `task` read carry `answer`, the one column where the store keeps an answer to a
+    question, a comment on a review or on an effect, and the note of a rejection; it is None when the person saved no text."""
+    path = str(tree["project"])
+    ops.request(path, "Invented request.", "demo")
+    first = ops.run_next(path)
+    ops.answer(path, first["pending_id"], "The price with tax, always.")
+    second = ops.run_next(path)
+    ops.answer(path, second["pending_id"], "Shorten the second paragraph.")
+    third = ops.run_next(path)
+    ops.release(path, third["pending_id"])
+
+    def rows():
+        found = {}
+        for task_id in {t["id"] for r in ops.status(path)["requests"] for t in r["tasks"]}:
+            for item in ops.task(path, task_id)["pending"]:
+                found[item["id"]] = item
+        return found
+
+    seen = rows()
+    said = seen[first["pending_id"]]
+    assert (said["kind"], said["status"], said["resolution"], said["answer"]) == ("question", "resolved", "answered", "The price with tax, always.")
+    comment = seen[second["pending_id"]]
+    assert (comment["kind"], comment["resolution"], comment["answer"]) == ("review", "answered", "Shorten the second paragraph.")
+    released = seen[third["pending_id"]]
+    assert (released["kind"], released["resolution"], released["answer"]) == ("review", "released", None), "a release saves no text"
+    # a rejected plan keeps its note in the same field, and a rejection without a note keeps none
+    for note in ("Too early: wait for the sale page.", None):
+        later = ops.request(path, "Another invented request.", title="Another")["request"]
+        plan_id = ops.route(path, later, "single")["pending_id"]
+        ops.reject(path, plan_id, note)
+        row = next(p for p in ops.task(path, later)["pending"] if p["id"] == plan_id)
+        assert (row["kind"], row["resolution"], row["answer"]) == ("plan", "rejected", note)
+    approved = ops.request(path, "A third invented request.", title="Third")["request"]
+    approved_plan = ops.route(path, approved, "single")["pending_id"]
+    ops.approve(path, approved_plan, ops.pending(path, approved_plan)["payload"]["plan_sha256"])
+    row = next(p for p in ops.task(path, approved)["pending"] if p["id"] == approved_plan)
+    assert (row["resolution"], row["answer"]) == ("approved", None), "an approval saves no text"

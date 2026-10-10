@@ -546,7 +546,20 @@ export function openable(path) {
 
 // --- the Inbox -------------------------------------------------------------------------------------------------------------
 
-/** The resolved lines of an agent's tasks: from the `pending` of each `task` body that is not open, newest first. */
+/**
+ * What the person saved with a decision (A-41): {label, text} from the `answer` the `task` read carries, or null when no text was saved. A question
+ * answered is "Your answer", a review or an effect answered "Your comment", any decision rejected "Your note". A release, an approval and a
+ * cancellation save no text the person sees. The text is returned as it was typed; the Inbox draws it as plain text.
+ */
+function saidOf(item, resolution) {
+  const text = typeof item.answer === "string" ? item.answer : "";
+  if (!text.trim()) return null;
+  if (resolution === "rejected") return { label: "Your note", text };
+  if (resolution === "answered") return { label: item.kind === "question" ? "Your answer" : "Your comment", text };
+  return null;
+}
+
+/** The resolved lines of an agent's tasks: from the `pending` of each `task` body that is not open, newest first; `said` is saidOf. */
 export function resolvedLines(bodies, taskIds, now, limit = 8) {
   const out = [];
   for (const id of taskIds) {
@@ -559,6 +572,7 @@ export function resolvedLines(bodies, taskIds, now, limit = 8) {
         id: item.id, kind: item.kind, resolution, text: `${format.kindWord(item.kind)} ${word(RESOLUTION, resolution) || "resolved"}`,
         tone: rejected ? "pui-muted pui-soft" : "pui-success pui-soft", title: item.title || "", stamp: item.resolved_at || item.created_at || "",
         age: format.age(item.resolved_at || item.created_at, now), when: formatWhen(item.resolved_at || item.created_at),
+        said: saidOf(item, resolution),
       });
     }
   }

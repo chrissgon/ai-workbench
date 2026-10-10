@@ -74,12 +74,19 @@ export function createInbox(env) {
     return card;
   }
 
+  /** What the person answered, commented or noted (A-41): a label and the text as plain text (textContent), never Markdown or markup; none when nothing was saved. */
+  function saidBlock(said) {
+    if (!said || !said.text) return null;
+    return h("div", { class: "wb-res-said" }, h("span", { class: "wb-card-label", text: said.label }), h("p", { text: said.text }));
+  }
+
   function resolvedList(lines) {
     if (!lines.length) return null;
     return h("div", { class: "wb-resolved-list" }, h("div", { class: "wb-section-label", text: "Resolved" }),
       lines.map((line) => h("details", { class: "pui-accordion-item wb-resolved-item" },
         h("summary", { class: "wb-resolved" }, chip(line.text, line.tone), h("span", { class: "wb-resolved-title", text: line.title }), h("span", { class: "wb-muted", text: line.age ? ` · ${format.agoPhrase(line.age)}` : "" })),
-        h("div", { class: "wb-card-hint wb-resolved-body", text: line.when ? `Resolved ${line.when}` : "Resolved" }))));
+        h("div", { class: "wb-card-hint wb-resolved-body", text: line.when ? `Resolved ${line.when}` : "Resolved" }),
+        saidBlock(line.said))));
   }
 
   function draw() {
