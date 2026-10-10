@@ -80,13 +80,13 @@ def _repo_pack(name):
 
 
 def test_the_design_pack_holds_the_design_chain_and_no_skill_is_in_two_area_packs():
-    """`design-execute` and `design-handoff` follow the brief: both are in the design agent's scope, so that `plan.agent_of`
+    """`design-ux-flows` stops without `docs/product/prd.md`, and `design-execute` and `design-handoff` follow the brief: all three are in the design agent's scope, so that `plan.agent_of`
     finds an owner for each. A skill is in one pack only."""
     design = _repo_pack("design")
-    assert {"product-feature-spec", "design-ux-flows", "design-system", "design-brief", "design-execute", "design-handoff"} <= set(design)
+    assert {"product-prd", "product-feature-spec", "design-ux-flows", "design-system", "design-brief", "design-execute", "design-handoff"} <= set(design)
     seen = {}
     for pack in AREA_PACKS:
         for skill in _repo_pack(pack):
             assert skill not in seen, f"{skill} is in the packs {seen[skill]} and {pack}: exactly one enabled agent must own it"
             seen[skill] = pack
-    assert {seen[s] for s in ("design-execute", "design-handoff")} == {"design"}
+    assert {seen[s] for s in ("product-prd", "design-execute", "design-handoff")} == {"design"}
