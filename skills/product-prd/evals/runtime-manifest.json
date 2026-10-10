@@ -22,6 +22,9 @@
   "asking_openings": [],
   "gate": null,
   "reply_phrases": {
+    "missing_input": [
+      "writes its specification"
+    ],
     "question_intros": [
       "Open questions for you",
       "Questions for you"
