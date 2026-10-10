@@ -53,7 +53,7 @@ clipboard (`pbcopy` on macOS, `Set-Clipboard` on Windows) or prints it in the te
 says so, and the token itself is never shown on the page. The page picks one of the strings the service gave and builds no command
 and joins no path into one (`js/views/token-prompt.js` spells none); a path the service cannot write safely as a command, an older
 service (404), an error and a system the page does not tell apart leave the earlier sentence ("the file whose path the service printed
-when it started") and the one field. Or open the token file in an editor, and paste its one line into the page. The page asks for it once per browser session: it
+when it started") and the one field. The browser's platform string is a hint, not a fact: an Android user agent and a touch device that says `MacIntel` (iPad Safari in its desktop mode) count as a system the page does not tell apart, so they get the sentence and no command. Or open the token file in an editor, and paste its one line into the page. The page asks for it once per browser session: it
 is kept in memory and in the tab's `sessionStorage` (which the browser drops when the tab closes), and the button "Forget
 the token" clears both. Where the browser can mask a text field by CSS the field is such a text field, not a password field, so that the browser does not offer to save a token that changes at every start; elsewhere (Firefox) it is a password field. The service writes a new token at every start, so after a restart the page asks again. Then the
 City appears: a project whose configuration is not accepted shows the service's message in a band under the header, with

@@ -191,6 +191,7 @@ def test_the_linux_command_run_by_a_shell_prints_the_file_of_an_awkward_path(pat
 
 @pytest.mark.parametrize("path", ["/home/demo/a\nb/service.token", "/home/demo/a\rb", "/home/demo/a\x00b", "/home/demo/a\x1b[31mb",
                                   "/home/demo/a\x7fb", "/home/demo/a\x85b", "/home/demo/a\u2028b", "/home/demo/a\u202eb",
+                                  "/home/\udcff/x", "/home/demo/a\ue000b", "/home/demo/a\u0378b",
                                   "relative/service.token", "", None, 7, b"/home/demo/x"])
 def test_a_path_with_a_control_character_or_no_absolute_path_gives_no_command(path):
     assert operations.token_commands(path) is None

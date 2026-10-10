@@ -420,10 +420,19 @@ POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"  # PowerShell reads each of thes
 
 
 def _plain_path(path) -> bool:
-    """True for an absolute path made of text a shell and a person can read: no control, format, line or paragraph
-    separator character (a newline would end the command, an escape sequence would rewrite the screen)."""
-    return (isinstance(path, str) and bool(path) and os.path.isabs(path)
-            and not any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in path))
+    """True for an absolute path made of text a shell and a person can read, and that JSON can carry: no control, format,
+    line or paragraph separator character (a newline would end the command, an escape sequence would rewrite the screen),
+    and no surrogate, private-use or unassigned code point (a folder name that is not valid UTF-8, read with
+    surrogateescape, holds a lone surrogate that cannot be written out as UTF-8)."""
+    if not (isinstance(path, str) and path and os.path.isabs(path)):
+        return False
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for c in path):
+        return False
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def token_commands(path):

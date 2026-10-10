@@ -1170,7 +1170,8 @@ def test_the_commands_the_route_gives_for_a_hard_path_are_read_back_whole_by_the
     assert body["commands"]["powershell"] == "Get-Content -LiteralPath '/home/demo/my shop/it''s \"here\"/$HOME `x`/service.token' | Set-Clipboard"
 
 
-@pytest.mark.parametrize("path", ["/home/demo/a\nb/service.token", "/home/demo/a\x00b", "/home/demo/a\x1b[2Jb", "/home/demo/a\rb"])
+@pytest.mark.parametrize("path", ["/home/demo/a\nb/service.token", "/home/demo/a\x00b", "/home/demo/a\x1b[2Jb", "/home/demo/a\rb",
+                                  "/home/\udcff/x"])  # the last: a folder name that is not valid UTF-8, read with surrogateescape
 def test_a_path_with_a_control_character_gives_no_path_and_no_command(world, path):
     world.svc.token_file = path
     status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False)
@@ -1257,10 +1258,31 @@ def test_a_served_service_gives_its_token_files_path_over_a_real_socket_and_neve
         assert run.finish() == 0
 
 
-def test_the_service_opens_no_file_for_the_route_and_documents_it():
+def test_the_service_spells_no_command_and_the_contract_names_the_route():
     assert "/token-file" in service.__doc__, "the rules list names the route"
     source = (st.RUNTIME / "service.py").read_text(encoding="utf-8")
     assert "operations.token_commands" in source, "the commands come from the one place that spells commands"
     assert not re.search(r"shlex|pbcopy|Set-Clipboard", source), "the service spells no command of its own"
     contract = (st.REPO / "contracts" / "runtime.md").read_text(encoding="utf-8")
     assert "`GET /token-file`" in contract and "any local process" in contract, "the contract records who can read the path, and why that is accepted"
+
+
+def test_the_answer_is_the_same_whether_the_token_file_is_there_absent_or_unreadable_because_the_route_never_reads_it(world, tmp_path):
+    folder = tmp_path / "shop"
+    folder.mkdir()
+    target = folder / "service.token"
+    target.write_text(TOKEN + "\n", encoding="utf-8")
+    world.svc.token_file = str(target)
+    present = call(world, "GET", TOKEN_ROUTE, auth=False)[2]
+    target.chmod(0)
+    try:
+        unreadable = call(world, "GET", TOKEN_ROUTE, auth=False)[2]
+    finally:
+        target.chmod(0o600)
+    target.unlink()
+    absent = call(world, "GET", TOKEN_ROUTE, auth=False)[2]
+    assert present == unreadable == absent and present["token_file"] == str(target)
+    assert TOKEN not in json.dumps([present, unreadable, absent])
+    source = (st.RUNTIME / "service.py").read_text(encoding="utf-8")
+    body = source[source.index("def _token_file("):source.index("def _static(")]
+    assert not re.search(r"\bopen\(|os\.stat|os\.path\.(?:exists|isfile)|read_text", body), "the route's function touches no file"

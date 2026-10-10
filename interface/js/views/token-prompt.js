@@ -20,11 +20,17 @@ const SYSTEMS = {
   windows: { name: "Windows", key: "powershell", sentence: COPIES },
 };
 
-/** The system a browser's platform string names ("macos", "linux" or "windows"), or null for any other (then the prompt keeps its sentence). */
-export function systemOf(platform) {
+/**
+ * The system a browser's platform string names ("macos", "linux" or "windows"), or null for any other (then the prompt keeps its
+ * sentence). The string is a hint, not a fact: `hints` ({userAgent, touchPoints}) takes back two false answers, an Android browser that
+ * says "Linux" (Firefox on Android) and a touch device that says "MacIntel" (iPad Safari in its desktop mode); neither has a terminal
+ * to run the command in, so both are unknown.
+ */
+export function systemOf(platform, hints = {}) {
   if (typeof platform !== "string") return null;
+  if (/android/i.test(String((hints && hints.userAgent) || ""))) return null;
   if (/^win/i.test(platform)) return "windows";
-  if (/^mac/i.test(platform)) return "macos";
+  if (/^mac/i.test(platform)) return Number(hints && hints.touchPoints) > 1 ? null : "macos";
   if (/^linux|^x11/i.test(platform)) return "linux";
   return null;
 }
@@ -32,6 +38,11 @@ export function systemOf(platform) {
 function browserPlatform() {
   if (typeof navigator === "undefined" || !navigator) return "";
   return String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
+}
+
+function browserHints() {
+  if (typeof navigator === "undefined" || !navigator) return {};
+  return { userAgent: String(navigator.userAgent || ""), touchPoints: Number(navigator.maxTouchPoints) || 0 };
 }
 
 /**
@@ -47,11 +58,11 @@ function masksText() {
  * Draw the prompt in `root`. onSubmit(token) is called with the pasted text when it has the shape of a token and
  * resolves when the page has tried it; `message` is shown above the field (why the prompt is here again).
  * `tokenFile` (optional) is an async function that reads the service's answer to GET /token-file ({token_file, commands}); when the
- * answer has a command for the browser's system (`platform`, default the browser's own) the prompt shows two steps, "1 · Run this in a
+ * answer has a command for the browser's system (`platform` and `hints`, default the browser's own) the prompt shows two steps, "1 · Run this in a
  * terminal" with the command and Copy, then "2 · Paste the token"; in every other case (no reader, an older service, an error, a path
  * with no safe command, a system not told apart) it keeps its sentence about the first line. `copyEnv` is for a test.
  */
-export function showTokenPrompt(root, { message, onSubmit, tokenFile, platform, copyEnv }) {
+export function showTokenPrompt(root, { message, onSubmit, tokenFile, platform, hints, copyEnv }) {
   const field = h("input", {
     id: "token-field", class: "pui-input wb-token-field", type: masksText() ? "text" : "password", name: "service-token", autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", required: true, "aria-describedby": "token-help",
@@ -104,7 +115,7 @@ export function showTokenPrompt(root, { message, onSubmit, tokenFile, platform, 
   if (typeof tokenFile !== "function") {
     fallback();
   } else {
-    const system = SYSTEMS[systemOf(platform === undefined ? browserPlatform() : platform)];
+    const system = SYSTEMS[systemOf(platform === undefined ? browserPlatform() : platform, hints === undefined ? browserHints() : hints)];
     Promise.resolve().then(() => tokenFile()).then((answer) => {
       const commands = answer && typeof answer === "object" && answer.commands && typeof answer.commands === "object" ? answer.commands : null;
       const command = system && commands ? commands[system.key] : null;

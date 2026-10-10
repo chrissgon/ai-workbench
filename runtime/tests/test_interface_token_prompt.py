@@ -54,6 +54,15 @@ async function draw(platform, tokenFile, extra = {}) {
 }
 const shape = (d) => ({ labels: d.labels, code: d.code, system: d.system, help: d.help, fieldLabel: d.fieldLabel, button: d.button.textContent, plain: d.plain });
 
+out.hinted = [
+  systemOf("MacIntel", { touchPoints: 5 }), systemOf("MacIntel", { touchPoints: 0 }), systemOf("MacIntel", { touchPoints: 1 }), systemOf("MacIntel", {}),
+  systemOf("Linux armv8l", { userAgent: "Mozilla/5.0 (Android 14; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0" }),
+  systemOf("Linux x86_64", { userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0" }),
+  systemOf("Win32", { userAgent: "Mozilla/5.0 (Windows NT 10.0)" }), systemOf("Linux", undefined), systemOf("Linux", null),
+];
+for (const [name, platform, hints] of [["ipad", "MacIntel", { touchPoints: 5, userAgent: "Mozilla/5.0 (Macintosh)" }], ["android", "Linux armv8l", { touchPoints: 5, userAgent: "Mozilla/5.0 (Android 14)" }]]) {
+  out[name] = shape(await draw(platform, async () => ({ token_file: "/x", commands: COMMANDS }), { hints }));
+}
 out.systems = ["MacIntel", "macOS", "Win32", "Windows", "Linux x86_64", "Linux", "X11", "iPhone", "", null, undefined, 7].map((p) => [String(p), systemOf(p)]);
 
 for (const [name, platform] of [["mac", "MacIntel"], ["linux", "Linux x86_64"], ["windows", "Win32"]]) {
@@ -124,6 +133,10 @@ def test_the_prompt_shows_two_steps_with_the_command_of_the_browsers_system_and_
     for name, kept in got["keeps"].items():
         assert kept == {"labels": [], "code": None, "system": None, "help": None, "fieldLabel": "Access token", "button": "Continue", "plain": [FALLBACK]}, \
             f"{name}: without a command for this system the prompt keeps the sentence about the first line"
+    assert got["hinted"] == [None, "macos", "macos", "macos", None, "linux", "windows", "linux", "linux"], \
+        "a touch device that says MacIntel and an Android user agent are unknown; the platform string is a hint"
+    for name in ("ipad", "android"):
+        assert got[name] == {"labels": [], "code": None, "system": None, "help": None, "fieldLabel": "Access token", "button": "Continue", "plain": [FALLBACK]}, name
     assert got["hostile"] == ["cat '/x/<b>y</b>'", 0]
     assert got["slow"] == {"asked": 1, "hasField": True, "code": None, "plainBefore": []}
     assert got["slowAfter"] == COMMANDS["macos"]
