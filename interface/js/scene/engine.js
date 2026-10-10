@@ -877,6 +877,7 @@ export function createEngine(host, options) {
       hoverSource = null;
       setOutline(null);
       tooltip.hidden = true;
+      if (options.onHover) options.onHover(null, "clear");   // the page's other two places of the mark (a plate, a row) clear with it (R-28)
       return true;
     },
     clearHover() {
@@ -885,6 +886,7 @@ export function createEngine(host, options) {
       hoverSource = null;
       setOutline(null);
       tooltip.hidden = true;
+      if (options.onHover) options.onHover(null, "clear");
       return true;
     },
     /** The page's next screen takes the scene over: its insets, its handlers; the hover of the screen before is gone. */

@@ -312,8 +312,8 @@ def test_the_building_has_a_plate_for_each_floor_and_no_control_room_label_and_t
     view = (JS / "views" / "building.js").read_text(encoding="utf-8")
     assert "cornerRight: 10" in view and "plateRight: base.right" in view and "frame.plateWidth()" in view
     assert "pointerover" in view and '.wb-plate' in view, "hovering a plate outlines its floor, a click opens it (as before WP-9.8)"
-    assert 'function highlightRow(name, fromScene = false, source = "pointer")' in view and "if (engine && !fromScene)" in view and ": null, true)," in view, \
-        "a hover that came from the scene never tells the engine again: hovering the door (no floor) used to clear the outline the pick had just drawn"
+    assert 'function highlightRow(name, fromScene = false, source = "pointer")' in view and "if (engine && (!fromScene || hover !== name))" in view and ", true, how" in view, \
+        "a hover that came from the scene does not tell the engine what it drew itself: hovering the door (no floor) used to clear the outline the pick had just drawn (R4-A3: it is told only when the focus's floor should come back)"
 
 
 # --- review fixes: the phone card's room --------------------------------------------------------------------------------------------------

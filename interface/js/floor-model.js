@@ -299,13 +299,13 @@ export function workOrder(status, rows, projectId = null) {
 }
 
 /**
- * The rows of the panel's "Requests (n)" (R-27, C-2): the open requests of the project, newest first, each {id, title, state, tone, steps, name, selected, link,
+ * The rows of the panel's "Requests (n)" (R-27, C-2): the open requests of the project, by number from the lowest as building.html lists them (the tracking bar's own list is newest first), each {id, title, state, tone, steps, name, selected, link,
  * cancellable, request}. `steps` is "2 of 6 steps done" and, when a task runs, " · now on Engineering" (the Lobby for the planning agent), else, when one waits for the
  * person, " · waiting for you". `selected` is the request the tracking bar shows. `request` is the row of the status body (the cancel dialog counts its tasks).
  */
 export function requestRows(status, projectId) {
   const shown = status ? pickRequest(status, requestChoice(projectId)) : null;
-  return openRequests(status).map((request) => {
+  return [...openRequests(status)].sort((a, b) => a.id - b.id).map((request) => {
     const tasks = Array.isArray(request.tasks) ? request.tasks : [];
     const done = tasks.filter((t) => t.state === "done").length;
     const current = tasks.find((t) => t.state === "running") || tasks.find((t) => t.state === "waiting") || null;

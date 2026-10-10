@@ -136,7 +136,7 @@ export function doorNode(spec) {
  * Stack boxes in one column with no overlap. items: [{want, height}] (want is the wished centre, in pixels, from the
  * floor's own height on screen); the result is the centre of each, in the same order, kept inside [top, bottom] with
  * `gap` between neighbours. Order follows `want`. When the column cannot fit, `fits` is false and the result is still the
- * tightest packing from the top (the caller then asks for compact plates).
+ * tightest packing from the top (the caller then shortens the plates to the name row alone).
  */
 export function stackColumn(items, top, bottom, gap) {
   const order = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.want - b.want || a.index - b.index);

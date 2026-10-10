@@ -95,17 +95,17 @@ def test_a_plate_is_the_name_row_alone_with_more_than_eight_floors(tmp_path):
 
 
 @needs_node
-def test_requests_n_lists_the_open_requests_newest_first_with_the_steps_line_and_the_followed_one_selected(tmp_path):
+def test_requests_n_lists_the_open_requests_by_number_from_the_lowest_with_the_steps_line_and_the_followed_one_selected(tmp_path):
     got = run_node(tmp_path, MODEL)
     ids = [r[0] for r in got["requests"]]
-    assert ids == [11, 9, 7], "the requests that are not done or cancelled, newest first"
+    assert ids == [7, 9, 11], "the requests that are not done or cancelled, from the lowest number, as building.html lists them (the tracking bar's own list stays newest first)"
     by = {r[0]: r for r in got["requests"]}
     assert by[7][1:6] == ["Spring sale page", "Running", "pui-theme pui-soft", "2 of 5 steps done · now on Engineering", True], "R-27: the title, the state chip in the state's colour, the steps line with where it is"
     assert by[9][1:6] == ["Request 9", "Planned", "pui-muted pui-soft", "0 of 2 steps done · waiting for you", False], "a request with no title is `Request <n>`; a waiting task reads `waiting for you`"
     assert by[11][4] == "0 of 0 steps done" and by[11][2] == "Requested"
     assert all(r[6] is True for r in got["requests"]) and by[7][7] == "#/p/0123456789ab/lobby/conversation/request/7", "every open request can be cancelled; the chevron goes to its line in the Lobby"
     assert by[7][8] == "Request 7, Spring sale page, Running, 2 of 5 steps done · now on Engineering"
-    assert got["chosen"] == [[11, False], [9, True], [7, False]], "the request the tracking bar shows (the person's choice) is the selected row"
+    assert got["chosen"] == [[7, False], [9, True], [11, False]], "the request the tracking bar shows (the person's choice) is the selected row"
     assert got["none"] == [[], []]
 
 
@@ -200,7 +200,8 @@ let selected = [];
 let refreshed = 0;
 const frame = makeFrame();
 frame.sceneHost.querySelectorAll = FakeNode.prototype.querySelectorAll;
-frame.acquireWorld = () => ({ flyTo: () => Promise.resolve(false), stats: () => ({}), highlight: (id, source) => highlights.push([id, source]), setCorner() {}, show() {}, refit() {}, setOptions() {} });
+let sceneOpts = null;
+frame.acquireWorld = (opts) => (sceneOpts = opts, { flyTo: () => Promise.resolve(false), stats: () => ({}), highlight: (id, source) => highlights.push([id, source]), setCorner() {}, show() {}, refit() {}, setOptions() {} });
 const view = createBuildingView(frame, { refresh: async () => { refreshed += 1; }, selectRequest: (project, id) => selected.push([project, id]) });
 const snap = JSON.parse(JSON.stringify(snapshot));
 snap.details[P].agents = [agent("planning"), agent("business"), agent("brand"), agent("engineering"), agent("marketing")];
@@ -239,9 +240,9 @@ out.floors = { heading: byClass(byClass(panel, "wb-sec")[2], "wb-sec-head")[0].t
   more: byClass(panel, "wb-sec-empty").filter((n) => !n.hidden).map((n) => n.textContent) };
 
 // a request row: the main button follows it; the chevron is a link; Cancel request asks first
-byClass(items[1], "wb-rq-main")[0].click();
+byClass(items[0], "wb-rq-main")[0].click();
 out.selected = selected.slice();
-const cancel = byClass(items[0], "wb-rq-cancel")[0];
+const cancel = byClass(items[1], "wb-rq-cancel")[0];
 const dialogs = () => [...frame.el.walk()].filter((n) => n.tagName === "DIALOG");
 out.dialogsBefore = dialogs().length;
 cancel.click();
@@ -268,6 +269,16 @@ fire(engRow, "pointerleave");
 out.leave = { engine: highlights.slice(-1)[0], plate: cls(plateA).includes("is-hover"), row: cls(engRow).includes("is-hover") };
 fire(engRow, "focus");
 out.focus = { engine: highlights.slice(-1)[0], plate: cls(plateA).includes("is-hover"), row: cls(engRow).includes("is-hover") };
+// two slots: the pointer on another row and away again leaves the keyboard's mark where it is
+const brandRow = rows.find((a) => a.attrs["data-floor"] === "brand");
+fire(brandRow, "pointerenter");
+out.twoSlots = { over: highlights.slice(-1)[0], engRow: cls(engRow).includes("is-hover"), brandRow: cls(brandRow).includes("is-hover") };
+fire(brandRow, "pointerleave");
+out.twoSlotsAfter = { engine: highlights.slice(-1)[0], plate: cls(plateA).includes("is-hover"), engRow: cls(engRow).includes("is-hover"), brandRow: cls(brandRow).includes("is-hover") };
+// Escape after the keyboard's focus: the engine clears its brackets and tells the page, which clears the plate and the row with them
+const told = highlights.length;
+sceneOpts.onHover(null, "clear");
+out.escape = { plate: cls(plateA).includes("is-hover"), row: cls(engRow).includes("is-hover"), engineTold: highlights.length - told };
 fire(engRow, "blur");
 // the pointer on a plate
 const hovered = (plate) => ({ target: { closest: () => plate } });
@@ -281,8 +292,10 @@ const before = seen.length;
 stateButton.click();
 await settle();
 out.state = { read: seen.slice(before), dialog: dialogs().find((d) => d.attrs["aria-label"] === "Project state").open };
-console.log(JSON.stringify(out));
+out.beforeDispose = dialogs().length;
 view.dispose();
+out.afterDispose = { dialogs: dialogs().length, panels: byClass(frame.main, "wb-panel-building").length };
+console.log(JSON.stringify(out));
 process.exit(0);
 """
 
@@ -311,16 +324,16 @@ def test_the_panel_is_the_head_with_project_state_as_an_icon_button_the_facts_re
 @needs_node
 def test_a_request_row_is_the_number_the_title_and_the_state_chip_the_steps_line_the_chevron_and_cancel_request_on_a_line_of_its_own(building):
     r = building["requests"]
-    assert [x["id"] for x in r] == ["3", "2"], "the open requests, newest first; the finished one is not listed"
-    followed = r[1]
-    assert "is-selected" in followed["classes"] and followed["current"] == "true" and r[0]["current"] is None, "R-27: the followed request takes the emphasis ground (aria-current)"
+    assert [x["id"] for x in r] == ["2", "3"], "the open requests, from the lowest number; the finished one is not listed"
+    followed = r[0]
+    assert "is-selected" in followed["classes"] and followed["current"] == "true" and r[1]["current"] is None, "R-27: the followed request takes the emphasis ground (aria-current)"
     assert followed["main"][:3] == ["SPAN:#2", "STRONG:Sale page", "SPAN:Running"], "R-27: the number, the title and the state chip"
     assert followed["main"][3].startswith("SPAN:1 of 3 steps done · now on Engineering"), "the steps line under the title: where the request is"
     assert followed["open"] == ["#/p/0123456789ab/lobby/conversation/request/2", "Open request #2 in the Lobby conversation"], "the chevron goes to the request's line in the Lobby"
     assert followed["cancel"][:2] == ["Cancel request", "Cancel request 2"] and followed["cancel"][2] == "BUTTON" and "pui-link" in followed["cancel"][3] and "pui-error" in followed["cancel"][3], \
         "R-27: `Cancel request` is a link-style error button"
     assert followed["order"] == ["wb-rq-main", "wb-rq-open", "wb-rq-cancel"], "the row holds the main button, the chevron and Cancel"
-    assert r[0]["main"][3].endswith("0 of 1 steps done")
+    assert r[1]["main"][3].endswith("0 of 1 steps done")
 
 
 @needs_node
@@ -354,6 +367,22 @@ def test_a_floor_is_marked_in_three_places_by_a_pointer_or_the_focus_on_its_row_
     assert g["focus"]["engine"] == ["floor:engineering", "keyboard"] and g["focus"]["plate"] is True and g["focus"]["row"] is True, "the focus on a row marks the three, as a keyboard focus"
     assert g["plateOver"] == {"engine": ["floor:brand", "pointer"], "plate": True, "row": True}, "the pointer on a plate marks the scene, the plate and its row"
     assert g["plateOut"]["engine"][0] is None and g["plateOut"]["plate"] is False
+
+
+@needs_node
+def test_the_focus_survives_the_pointer_leaving_another_row_and_escape_clears_the_scene_the_plate_and_the_row_together(building):
+    g = building
+    assert g["twoSlots"] == {"over": ["floor:brand", "pointer"], "engRow": False, "brandRow": True}, "the pointer's floor is the one marked while it is over one"
+    assert g["twoSlotsAfter"] == {"engine": ["floor:engineering", "keyboard"], "plate": True, "engRow": True, "brandRow": False}, \
+        "a pointer leaving a row does not clear the mark of the row that has the focus: the engine is told the focus's floor again"
+    assert g["escape"] == {"plate": False, "row": False, "engineTold": 0}, "Escape: the engine clears its brackets and tells the page (onHover(null, \"clear\")), which clears the plate and the row"
+    engine = (JS / "scene" / "engine.js").read_text(encoding="utf-8")
+    assert engine.count('if (options.onHover) options.onHover(null, "clear");') == 2, "clearSelection and clearHover both tell the page"
+
+
+@needs_node
+def test_a_disposed_view_leaves_no_dialog_and_no_panel_in_the_frame(building):
+    assert building["beforeDispose"] == 2 and building["afterDispose"] == {"dialogs": 0, "panels": 0}, "the state viewer's dialog and the cancel dialog the view added to the frame go with it"
 
 
 @needs_node
@@ -477,6 +506,11 @@ def test_the_buildings_phone_rows_are_at_least_44_px_and_the_sheet_keeps_space_a
     phone = rules(PHONE)
     assert any(sel == ".wb-fl-row, .wb-rq-main" and decl.get("min-height") == "44px" for sel, decl in phone), "R-10: rows are at least 44 px high on a phone"
     assert any(sel == ".wb-bpanel > .wb-panel-body" and decl.get("padding") == "12px 12px 28px" for sel, decl in phone)
+
+
+def test_a_plate_has_no_compact_pass_in_the_stacking():
+    labels = (JS / "scene" / "labels.js").read_text(encoding="utf-8")
+    assert "is-compact" not in labels and "compact" not in labels.split("function placeColumn")[1].split("export function placeLabels")[0], "R-25: one size; the only short form is the name row alone"
 
 
 def test_the_building_passes_the_requests_selection_to_the_page_and_the_view_makes_the_cancel_dialog_only_when_asked():

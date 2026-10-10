@@ -38,7 +38,9 @@ export function createBuildingView(frame, env) {
   let documentsTruncated = false;
   let documentsAt = 0;
   let reading = false;
-  let hover = null;
+  let hover = null;          // the floor marked now: the pointer's, else the focus's
+  let pointerAt = null;      // two slots, so that a pointer leaving a focused row does not clear the keyboard's mark
+  let focusAt = null;
   let focusName = null;
   let shown = "";
   let listShown = "";
@@ -141,10 +143,13 @@ export function createBuildingView(frame, env) {
     for (const el of places) el.classList.toggle("is-hover", name !== null && el.getAttribute("data-floor") === name);
   }
 
+  // `source` "pointer" or "keyboard" fills its own slot; "clear" (the engine's Escape) empties both. The mark is the pointer's floor, else the focus's.
   function highlightRow(name, fromScene = false, source = "pointer") {
-    hover = name;
-    markFloor(name);
-    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null, source);
+    if (source === "clear") { pointerAt = null; focusAt = null; } else if (source === "keyboard") focusAt = name; else pointerAt = name;
+    hover = pointerAt || focusAt;
+    markFloor(hover);
+    // the engine is told unless the scene itself drew exactly this (its own pick already did): a pointer that leaves the room while the focus is on a row puts the focus's brackets back
+    if (engine && (!fromScene || hover !== name)) engine.highlight(hover ? `floor:${hover}` : null, pointerAt ? "pointer" : "keyboard");
     drawCorner();
   }
 
@@ -180,7 +185,7 @@ export function createBuildingView(frame, env) {
         return { ...base, right: base.right + frame.plateWidth() + PLATE_GAP_X + PLATE_SHIFT, plateRight: base.right + PLATE_SHIFT };
       },
       onOpen: open,
-      onHover: (id) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null, true),
+      onHover: (id, how) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null, true, how === "clear" ? "clear" : "pointer"),
       onUnavailable: () => frame.sceneUnavailable(true),
       onRestored: () => frame.sceneUnavailable(false),   // the context came back: the host is shown again
     });
@@ -441,6 +446,7 @@ export function createBuildingView(frame, env) {
       frame.sceneHost.removeEventListener("pointerout", onOut);
       frame.sceneHost.removeEventListener("click", onClick);
       viewer.close();
+      if (cancelDialog) cancelDialog.el.remove();   // the dialog it added to the frame leaves with the view (an open one is dismissed)
       panel.remove();   // the scene is the frame's: the City takes it over (the building closes), or the frame takes it down
       stateDialog.remove();
       steps.remove();
