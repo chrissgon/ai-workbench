@@ -34,10 +34,9 @@ const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
 /**
  * svg(tag, attrs, ...children): an element of the SVG namespace, built as h() builds one (an event handler or a style attribute is refused, a string child
  * is a text node, `text` is assigned with textContent). Used for the few drawings the page makes itself: the token prompt's ground of dots and its owl.
- * A document with no namespaces (a test's stand-in) gets a plain element.
  */
 export function svg(tag, attrs = {}, ...children) {
-  const node = typeof document.createElementNS === "function" ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
+  const node = document.createElementNS(SVG_NS, tag);
   for (const [name, value] of Object.entries(attrs || {})) {
     if (value === undefined || value === null || value === false) continue;
     if (FORBIDDEN.test(name)) throw new Error(`the attribute ${name} is not allowed`);

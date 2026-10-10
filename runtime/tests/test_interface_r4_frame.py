@@ -291,7 +291,7 @@ def test_the_token_prompt_is_a_technical_sheet_with_two_steps_the_refusals_in_th
     owl = got["owl"]
     assert owl["tag"] == "SVG" and owl["cls"] == ["wb-owl"] and owl["size"] == ["168", "168"] and owl["viewBox"] == "0 0 200 200" and owl["hidden"] == "true"
     assert owl["moving"] == [2, 2, 2], "R-15: both pupils, both lids and both lid lines are the parts the stylesheet moves"
-    assert owl["clips"] == ["owl-l1", "owl-r1"] or len(set(owl["clips"] + owl["others"])) == 4, "one clip path for each eye, ids that never repeat"
+    assert len(owl["clips"]) == 2 and len(set(owl["clips"] + owl["others"])) == 4, "one clip path for each eye, ids that never repeat"
     assert owl["forbidden"] == [], "no style, event or link attribute on the drawing"
     assert owl["fills"] == ["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FCD34D", "#FFFFFF"], "the mark's own fixed palette, in the owl module and nowhere else"
     assert got["hostile"] == ["pbcopy < '/x/<b>y</b>'", 0]
@@ -373,3 +373,121 @@ def test_the_owls_palette_is_the_marks_and_lives_in_its_module_alone():
             continue
         assert not re.search(r"#1E1B2E|#A47551|#FCD34D|#E6D2BC", path.read_text(encoding="utf-8"), re.I), f"{path.name} holds a colour of the owl: the palette lives in the owl's module"
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", CSS.replace("light-dark(#6B4429, #C99A6E)", "")), "no colour literal in the stylesheet but the brand pair"
+
+
+# --- svg(): the page's own drawings are built as h() builds an element -----------------------------------------------------------------------
+
+SVG = r"""
+import "@FAKE@";
+import { svg } from "@JS@/dom.js";
+const out = {};
+for (const name of ["onclick", "onload", "style", "href", "xlink:href"]) {
+  try { svg("circle", { [name]: name === "style" ? "fill: red" : "x" }); out[name] = "built"; } catch (e) { out[name] = e.message; }
+}
+const text = svg("text", { text: "<b>x</b>", x: 1, hidden: true, y: null, z: false }, "a", ["b", null], undefined);
+out.text = [text.tagName, text.textContent, text.attrs.x, "hidden" in text.attrs, "y" in text.attrs, "z" in text.attrs];
+out.child = svg("g", {}, svg("path", { d: "M0 0" })).children[0].attrs.d;
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_svg_refuses_an_event_a_style_and_a_link_and_assigns_text_as_text(tmp_path):
+    got = run_node(tmp_path, SVG)
+    for name in ("onclick", "onload", "style"):
+        assert "is not allowed" in got[name], f"{name} is refused"
+    for name in ("href", "xlink:href"):
+        assert "links to nothing" in got[name], f"{name} is refused: a drawing of the page links to nothing"
+    assert got["text"] == ["TEXT", "<b>x</b>ab", "1", True, False, False], "`text` is a text node (never markup); strings and arrays of strings are text children; null and false attributes are skipped"
+    assert got["child"] == "M0 0"
+
+
+# --- the cascade: a phone rule that a later rule of the stylesheet beats is a rule that never applies -------------------------------------------
+
+def _rules(css: str):
+    """Every rule of the stylesheet in file order as (media conditions, selector, declarations); a selector list is split outside its parentheses."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = []
+
+    def walk(block: str, media: tuple):
+        pos = 0
+        while pos < len(block):
+            found = re.compile(r"\s*([^{}]+)\{").match(block, pos)
+            if not found:
+                break
+            head, depth, i = found.group(1).strip(), 1, found.end()
+            while depth:
+                depth += (block[i] == "{") - (block[i] == "}")
+                i += 1
+            body, pos = block[found.end():i - 1], i
+            if head.startswith("@media"):
+                walk(body, media + (head,))
+            elif not head.startswith("@"):
+                decls = {k.strip(): v.strip() for k, v in re.findall(r"([\w-]+)\s*:\s*([^;]+);?", body)}
+                depth, start, parts = 0, 0, []
+                for n, c in enumerate(head):
+                    depth += (c == "(") - (c == ")")
+                    if c == "," and depth == 0:
+                        parts.append(head[start:n])
+                        start = n + 1
+                parts.append(head[start:])
+                for part in parts:
+                    out.append((media, " ".join(part.split()), decls))
+
+    walk(css, ())
+    return out
+
+
+def _on_phone(media: tuple) -> bool:
+    for m in media:
+        low, high = re.search(r"min-width:\s*(\d+)px", m), re.search(r"max-width:\s*(\d+)px", m)
+        if "prefers" in m or (low and int(low.group(1)) > 375) or (high and int(high.group(1)) < 375):
+            return False
+    return True
+
+
+def phone_value(selector: str, prop: str):
+    """What the cascade gives `prop` of exactly `selector` at 375 px: the last rule of the file that names it and applies there."""
+    value = None
+    for media, sel, decls in _rules(CSS):
+        if sel == selector and prop in decls and _on_phone(media):
+            value = decls[prop]
+    return value
+
+
+def test_the_command_panel_is_a_fixed_full_width_sheet_on_a_phone_and_no_tab_list_keeps_a_padding_a_later_rule_replaced():
+    assert phone_value(".wb-cmd-panel", "position") == "fixed", "at 375 px the command panel is fixed, not the desktop's absolute"
+    assert phone_value(".wb-cmd-panel", "width") == "auto" and phone_value(".wb-cmd-panel", "top") == "auto", "full width between 8 px margins, not 420 px at the desktop's place"
+    assert (phone_value(".wb-cmd-panel", "left"), phone_value(".wb-cmd-panel", "right"), phone_value(".wb-cmd-panel", "bottom")) == ("8px", "8px", "96px")
+    assert phone_value(".wb-tablist", "padding") == "3px", "the segmented control's padding is the last word at 375 px too (the earlier phone padding was dead)"
+
+
+def test_no_phone_rule_of_the_stylesheet_is_beaten_by_a_later_rule_of_the_same_selector():
+    rules = _rules(CSS)
+    beaten = []
+    for n, (media, sel, decls) in enumerate(rules):
+        if not any("max-width: 639px" in m for m in media):
+            continue
+        for prop, value in decls.items():
+            for media2, sel2, decls2 in rules[n + 1:]:
+                if sel2 == sel and prop in decls2 and decls2[prop] != value and _on_phone(media2) and not any("max-width: 639px" in m for m in media2):
+                    beaten.append((sel, prop, value, decls2[prop]))
+    assert beaten == [], f"a phone rule that a later top-level rule beats never applies: move it after that rule: {beaten}"
+
+
+# --- no colour literal in a module of the page but the brand's own drawings --------------------------------------------------------------------
+
+PALETTE_MODULES = {"token-owl.js", "owl.js"}      # the owl's fixed palette is the brand's (R-15, R-41): the prompt's owl, and the scene's (R4-B1)
+
+
+def test_no_module_of_the_page_names_a_colour_but_the_owls_palette_modules():
+    literal = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
+    found = {}
+    for path in sorted(JS.rglob("*.js")):
+        if path.name in PALETTE_MODULES:
+            continue
+        text = re.sub(r"//[^\n]*", "", path.read_text(encoding="utf-8"))
+        hits = literal.findall(text)
+        if hits:
+            found[str(path.relative_to(INTERFACE))] = hits
+    assert found == {}, f"a colour is a token, read from the stylesheet: {found}"

@@ -195,7 +195,6 @@ code, .mono {
 .wb-icon-folder-minus { -webkit-mask-image: url("./icons/folder-minus.svg"); mask-image: url("./icons/folder-minus.svg"); }
 .wb-icon-folder-plus { -webkit-mask-image: url("./icons/folder-plus.svg"); mask-image: url("./icons/folder-plus.svg"); }
 .wb-icon-inbox { -webkit-mask-image: url("./icons/inbox.svg"); mask-image: url("./icons/inbox.svg"); }
-.wb-icon-info { -webkit-mask-image: url("./icons/info.svg"); mask-image: url("./icons/info.svg"); }
 .wb-icon-key-round { -webkit-mask-image: url("./icons/key-round.svg"); mask-image: url("./icons/key-round.svg"); }
 .wb-icon-maximize { -webkit-mask-image: url("./icons/maximize.svg"); mask-image: url("./icons/maximize.svg"); }
 .wb-icon-message-square { -webkit-mask-image: url("./icons/message-square.svg"); mask-image: url("./icons/message-square.svg"); }
@@ -757,7 +756,6 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-door-label { display: none; }
   .wb-listbox-card { top: auto; bottom: calc(100% + 6px); right: -12px; left: -12px; width: auto; max-width: none; }
   .wb-listbox .wb-option { min-height: 44px; }
-  .wb-cmd-panel { position: fixed; top: auto; right: 8px; bottom: 96px; left: 8px; width: auto; max-height: 60dvh; }
   .wb-sheet-body .wb-wait-row { min-height: 56px; }
   .wb-frame[data-screen="control"] .wb-track { display: none; }
 }
@@ -930,7 +928,6 @@ a.wb-now-title:hover { text-decoration: underline; }
 
 @media (max-width: 639px) {
   .wb-control-content { padding: 12px; }
-  .wb-tablist { padding: 0 6px; }
   .wb-tab-body { gap: 10px; }
   .wb-skill-table { display: none; }
   .wb-skill-cards { display: grid; gap: 10px; }
@@ -1697,3 +1694,8 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-acc > summary::-webkit-details-marker { display: none; }
 .wb-acc-chev { display: inline-grid; place-items: center; width: 16px; rotate: -90deg; color: var(--pui-text-muted); }
 .wb-acc[open] > summary .wb-acc-chev { rotate: 0deg; }
+
+/* the phone's part of the round-4 components, after their rules above so that it is the one that applies (a rule of an earlier phone block would lose to them) */
+@media (max-width: 639px) {
+  .wb-cmd-panel { position: fixed; top: auto; right: 8px; bottom: 96px; left: 8px; width: auto; max-height: 60dvh; }
+}
